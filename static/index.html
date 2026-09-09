@@ -1,0 +1,156 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>本地账单分析</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <main class="shell">
+    <header class="topbar">
+      <div>
+        <p class="eyebrow">LOCAL BILL ANALYTICS</p>
+        <h1>本地账单分析</h1>
+        <p id="periodText" class="muted">正在读取数据库…</p>
+      </div>
+      <div class="upload-area">
+        <input id="fileInput" type="file" accept=".xlsx,.csv" multiple hidden>
+        <button id="uploadButton" class="button primary" type="button">导入新账单</button>
+        <p class="micro">支持微信 XLSX、支付宝 CSV</p>
+      </div>
+    </header>
+
+    <div id="notice" class="notice" role="status" aria-live="polite" hidden></div>
+
+    <section class="filters" aria-label="分析筛选">
+      <label>开始日期<input id="startDate" type="date"></label>
+      <label>结束日期<input id="endDate" type="date"></label>
+      <label>平台
+        <select id="platformFilter">
+          <option value="">全部平台</option>
+          <option value="微信">微信</option>
+          <option value="支付宝">支付宝</option>
+        </select>
+      </label>
+      <label>趋势粒度
+        <select id="granularity">
+          <option value="month">按月</option>
+          <option value="week">按周</option>
+          <option value="day">按天</option>
+        </select>
+      </label>
+      <button id="applyFilters" class="button" type="button">应用筛选</button>
+      <button id="clearFilters" class="button ghost" type="button">清除</button>
+    </section>
+
+    <section class="stats" aria-label="账单概览">
+      <article class="stat"><span>净支出</span><strong id="netSpend">—</strong><small id="expenseMeta">—</small></article>
+      <article class="stat"><span>非退款收入</span><strong id="income">—</strong><small>退款单独抵扣支出</small></article>
+      <article class="stat"><span>收入减净支出</span><strong id="cashGap">—</strong><small>所选账单期</small></article>
+      <article class="stat"><span>日均净支出</span><strong id="dailyAverage">—</strong><small id="medianMeta">—</small></article>
+    </section>
+
+    <section class="section">
+      <div class="section-title"><div><h2>平台构成</h2><p class="muted">按扣除退款后的净支出</p></div></div>
+      <div id="platformBar" class="platform-bar" aria-label="平台支出构成"></div>
+      <div id="platformLegend" class="legend"></div>
+    </section>
+
+    <section class="section">
+      <div class="section-title">
+        <div><h2 id="trendTitle">月度支出与构成</h2><p id="trendHint" class="muted">按当前分类规则汇总，末月可能是不完整月份</p></div>
+      </div>
+      <div id="monthlyLegend" class="legend compact"></div>
+      <div class="chart-scroll"><svg id="monthlyChart" class="monthly-chart" role="img" aria-label="分类支出堆叠柱状图"></svg></div>
+      <div id="trendDetail" class="trend-detail" hidden>
+        <div class="trend-detail-head">
+          <div><p class="micro">选中时段</p><h3 id="trendDetailTitle">—</h3><p id="trendDetailMeta" class="muted">—</p></div>
+          <button id="closeTrendDetail" class="button ghost" type="button">关闭</button>
+        </div>
+        <div class="trend-detail-stats">
+          <article><span>净支出</span><strong id="detailNetSpend">—</strong></article>
+          <article><span id="detailComparisonLabel">环比</span><strong id="detailComparison">—</strong></article>
+          <article><span>支出笔数</span><strong id="detailExpenseCount">—</strong></article>
+          <article><span>退款抵扣</span><strong id="detailRefunds">—</strong></article>
+        </div>
+        <div class="trend-detail-grid">
+          <div><h4>消费类别构成</h4><div id="detailCategories" class="detail-categories"></div></div>
+          <div><h4>主要商户</h4><ol id="detailMerchants" class="rank-list detail-merchants"></ol></div>
+        </div>
+      </div>
+    </section>
+
+    <div class="two-column">
+      <section class="section">
+        <div class="section-title"><div><h2>主要支出类别</h2><p class="muted">净支出金额与占比</p></div></div>
+        <div id="categoryBars" class="category-bars"></div>
+      </section>
+
+      <section class="section">
+        <div class="section-title"><div><h2>消费时间热力</h2><p class="muted">支出原额，颜色越深金额越高</p></div></div>
+        <div id="heatmap" class="heatmap"></div>
+      </section>
+    </div>
+
+    <div class="two-column tables-grid">
+      <section class="section">
+        <div class="section-title"><div><h2>商户排行</h2><p class="muted">按支出交易原额</p></div></div>
+        <div class="table-wrap">
+          <table><thead><tr><th>商户</th><th>平台</th><th class="number">笔数</th><th class="number">金额</th></tr></thead><tbody id="merchantTable"></tbody></table>
+        </div>
+      </section>
+      <section class="section">
+        <div class="section-title"><div><h2>最高支出日</h2><p class="muted">按当日净支出</p></div></div>
+        <ol id="topDays" class="rank-list"></ol>
+      </section>
+    </div>
+
+    <section class="section">
+      <div class="section-title"><div><h2>最近交易</h2><p class="muted">展示当前筛选结果中的最近 30 笔</p></div></div>
+      <div class="table-wrap">
+        <table class="recent-table"><thead><tr><th>时间</th><th>平台</th><th>方向</th><th>类别</th><th>交易对方</th><th>说明</th><th class="number">金额</th></tr></thead><tbody id="recentTable"></tbody></table>
+      </div>
+    </section>
+
+    <details class="section rules-section">
+      <summary><span>自定义分类规则</span><small>新增规则可立即重算历史记录，也会用于以后导入</small></summary>
+      <form id="ruleForm" class="rule-form">
+        <label>匹配字段
+          <select name="field">
+            <option value="all">所有文字字段</option>
+            <option value="counterparty">交易对方</option>
+            <option value="description">商品说明</option>
+            <option value="category_raw">原始分类</option>
+            <option value="payment_method">支付方式</option>
+            <option value="status">交易状态</option>
+          </select>
+        </label>
+        <label>包含关键词<input name="pattern" required placeholder="例如：麦当劳"></label>
+        <label>归入分类<input name="category" required placeholder="例如：餐饮"></label>
+        <label>优先级<input name="priority" type="number" value="100" min="1" max="9999"></label>
+        <label class="check"><input name="apply_existing" type="checkbox" checked>立即应用到历史数据</label>
+        <button class="button primary" type="submit">新增规则</button>
+      </form>
+      <div class="table-wrap">
+        <table><thead><tr><th>字段</th><th>关键词</th><th>目标分类</th><th class="number">优先级</th><th></th></tr></thead><tbody id="rulesTable"></tbody></table>
+      </div>
+    </details>
+
+    <details class="section">
+      <summary><span>导入历史</span><small>每次导入都会记录新增、更新和重复数量</small></summary>
+      <div class="table-wrap">
+        <table><thead><tr><th>时间</th><th>文件</th><th>平台</th><th class="number">总数</th><th class="number">新增</th><th class="number">更新</th><th class="number">重复</th></tr></thead><tbody id="importsTable"></tbody></table>
+      </div>
+    </details>
+
+    <footer>
+      <span>数据保存在本机 SQLite，不上传云端。</span>
+      <span id="dbPath"></span>
+    </footer>
+  </main>
+  <script src="/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,22 @@
+# Python caches and local environments
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.env
+
+# Personal bill data and local database
+data/*
+!data/.gitkeep
+*.csv
+*.xlsx
+*.xls
+
+# Generated visual verification files
+tests/dashboard-*.png
+
+# OS and editor files
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

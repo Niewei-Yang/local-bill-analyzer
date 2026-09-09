@@ -21,7 +21,7 @@ def _filters(params: dict[str, str]) -> tuple[str, list[str]]:
     if params.get("end"):
         clauses.append("date(transaction_time) <= date(?)")
         values.append(params["end"])
-    if params.get("platform") in {"微信", "支付宝"}:
+    if params.get("platform") in {"微信", "支付宝", "校内收入"}:
         clauses.append("platform = ?")
         values.append(params["platform"])
     if params.get("category"):
@@ -207,13 +207,17 @@ def dashboard(db_path: Path | str, params: dict[str, str]) -> dict:
 
 def transactions(db_path: Path | str, params: dict[str, str]) -> dict:
     where, values = _filters(params)
+    if params.get("direction") in {"expense", "income", "neutral"}:
+        where += f"{' AND' if where else ' WHERE'} direction = ?"
+        values.append(params["direction"])
     page = max(1, int(params.get("page", "1")))
     size = min(200, max(1, int(params.get("size", "50"))))
     offset = (page - 1) * size
+    order_by = "amount_cents DESC, transaction_time DESC" if params.get("sort") == "amount_desc" else "transaction_time DESC"
     with connect(db_path) as connection:
         total = connection.execute(f"SELECT COUNT(*) FROM transactions {where}", values).fetchone()[0]
         rows = connection.execute(
-            f"SELECT * FROM transactions {where} ORDER BY transaction_time DESC LIMIT ? OFFSET ?",
+            f"SELECT * FROM transactions {where} ORDER BY {order_by} LIMIT ? OFFSET ?",
             values + [size, offset],
         ).fetchall()
     return {

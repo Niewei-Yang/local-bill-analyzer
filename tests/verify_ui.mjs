@@ -13,6 +13,14 @@ for (const width of [1280, 390]) {
   await page.goto('http://127.0.0.1:8765', { waitUntil: 'networkidle' });
   await page.waitForSelector('#monthlyChart rect');
   const monthAxisTop = await page.locator('#monthlyChart .chart-muted').last().textContent();
+  const basePagerVisible = await page.locator('#recentPager').isVisible();
+  if (basePagerVisible) {
+    await Promise.all([
+      page.waitForResponse(response => response.url().includes('/api/transactions') && response.url().includes('page=2')),
+      page.click('#recentNext'),
+    ]);
+    await page.waitForFunction(() => document.querySelector('#recentPageInfo').textContent.includes('第 2 /'));
+  }
   await Promise.all([
     page.waitForResponse(response => response.url().includes('/api/dashboard') && response.url().includes('granularity=week')),
     page.selectOption('#granularity', 'week'),
@@ -23,8 +31,13 @@ for (const width of [1280, 390]) {
   const weekDetail = await page.evaluate(() => ({
     title: document.querySelector('#trendDetailTitle').textContent,
     meta: document.querySelector('#trendDetailMeta').textContent,
-    categories: document.querySelectorAll('#detailCategories .detail-category-row').length,
+    categoryHint: document.querySelector('#categoryHint').textContent,
+    recentHint: document.querySelector('#recentHint').textContent,
+    categories: document.querySelectorAll('#categoryBars .category-row').length,
   }));
+  await page.locator('#monthlyChart .trend-period.selected').click();
+  await page.waitForFunction(() => document.querySelector('#trendDetail').hidden);
+  const selectionCancelled = await page.evaluate(() => !document.querySelector('.trend-period.selected') && document.querySelector('#categoryHint').textContent === '净支出金额与占比');
   await Promise.all([
     page.waitForResponse(response => response.url().includes('/api/dashboard') && response.url().includes('granularity=day')),
     page.selectOption('#granularity', 'day'),
@@ -41,8 +54,8 @@ for (const width of [1280, 390]) {
     granularityOptions: document.querySelectorAll('#granularity option').length,
     detailVisible: !document.querySelector('#trendDetail').hidden,
     detailTitle: document.querySelector('#trendDetailTitle').textContent,
-    detailCategoryRows: document.querySelectorAll('#detailCategories .detail-category-row').length,
-    detailMerchantRows: document.querySelectorAll('#detailMerchants li').length,
+    topSpendTitle: document.querySelector('#topSpendTitle').textContent,
+    selectedPagerVisible: !document.querySelector('#recentPager').hidden,
     categoryRows: document.querySelectorAll('#categoryBars .category-row').length,
     heatCells: document.querySelectorAll('#heatmap .heat-cell').length,
     merchantRows: document.querySelectorAll('#merchantTable tr').length,
@@ -50,6 +63,8 @@ for (const width of [1280, 390]) {
     horizontalOverflow: document.documentElement.scrollWidth > document.documentElement.clientWidth + 1,
   }));
   checks.adaptiveAxis = { month: monthAxisTop, day: dayAxisTop, changed: monthAxisTop !== dayAxisTop };
+  checks.basePagerVisible = basePagerVisible;
+  checks.selectionCancelled = selectionCancelled;
   checks.weekDetail = weekDetail;
   checks.errors = errors;
   console.log(JSON.stringify({ width, checks }));

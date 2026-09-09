@@ -33,6 +33,7 @@
           <option value="">全部平台</option>
           <option value="微信">微信</option>
           <option value="支付宝">支付宝</option>
+          <option value="校内收入">校内收入</option>
         </select>
       </label>
       <label>趋势粒度
@@ -76,43 +77,44 @@
           <article><span>支出笔数</span><strong id="detailExpenseCount">—</strong></article>
           <article><span>退款抵扣</span><strong id="detailRefunds">—</strong></article>
         </div>
-        <div class="trend-detail-grid">
-          <div><h4>消费类别构成</h4><div id="detailCategories" class="detail-categories"></div></div>
-          <div><h4>主要商户</h4><ol id="detailMerchants" class="rank-list detail-merchants"></ol></div>
-        </div>
       </div>
     </section>
 
     <div class="two-column">
       <section class="section">
-        <div class="section-title"><div><h2>主要支出类别</h2><p class="muted">净支出金额与占比</p></div></div>
+        <div class="section-title"><div><h2>主要支出类别</h2><p id="categoryHint" class="muted">净支出金额与占比</p></div></div>
         <div id="categoryBars" class="category-bars"></div>
       </section>
 
       <section class="section">
-        <div class="section-title"><div><h2>消费时间热力</h2><p class="muted">支出原额，颜色越深金额越高</p></div></div>
+        <div class="section-title"><div><h2>消费时间热力</h2><p id="heatmapHint" class="muted">支出原额，颜色越深金额越高</p></div></div>
         <div id="heatmap" class="heatmap"></div>
       </section>
     </div>
 
     <div class="two-column tables-grid">
       <section class="section">
-        <div class="section-title"><div><h2>商户排行</h2><p class="muted">按支出交易原额</p></div></div>
+        <div class="section-title"><div><h2>商户排行</h2><p id="merchantHint" class="muted">按支出交易原额</p></div></div>
         <div class="table-wrap">
           <table><thead><tr><th>商户</th><th>平台</th><th class="number">笔数</th><th class="number">金额</th></tr></thead><tbody id="merchantTable"></tbody></table>
         </div>
       </section>
       <section class="section">
-        <div class="section-title"><div><h2>最高支出日</h2><p class="muted">按当日净支出</p></div></div>
+        <div class="section-title"><div><h2 id="topSpendTitle">最高支出日</h2><p id="topSpendHint" class="muted">按当日净支出</p></div></div>
         <ol id="topDays" class="rank-list"></ol>
       </section>
     </div>
 
     <section class="section">
-      <div class="section-title"><div><h2>最近交易</h2><p class="muted">展示当前筛选结果中的最近 30 笔</p></div></div>
+      <div class="section-title"><div><h2>最近交易</h2><p id="recentHint" class="muted">展示当前筛选结果中的最近交易</p></div></div>
       <div class="table-wrap">
         <table class="recent-table"><thead><tr><th>时间</th><th>平台</th><th>方向</th><th>类别</th><th>交易对方</th><th>说明</th><th class="number">金额</th></tr></thead><tbody id="recentTable"></tbody></table>
       </div>
+      <nav id="recentPager" class="pager" aria-label="最近交易分页" hidden>
+        <button id="recentPrev" class="button ghost" type="button">上一页</button>
+        <span id="recentPageInfo" class="muted">—</span>
+        <button id="recentNext" class="button ghost" type="button">下一页</button>
+      </nav>
     </section>
 
     <details class="section rules-section">

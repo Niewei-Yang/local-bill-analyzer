@@ -8,8 +8,10 @@ from pathlib import Path
 from openpyxl import Workbook
 
 from app import import_bytes
-from bill_analyzer.analytics import dashboard
-from bill_analyzer.db import add_rule, connect, init_db
+from bill_analyzer.analytics import dashboard, transactions
+from bill_analyzer.categorize import classify
+from bill_analyzer.db import add_rule, connect, import_transactions, init_db
+from bill_analyzer.models import Transaction
 
 
 def alipay_csv() -> bytes:
@@ -52,6 +54,9 @@ class CoreTests(unittest.TestCase):
         self.assertEqual(result["summary"]["net_spend"], 80.0)
         self.assertEqual(result["summary"]["income"], 50.0)
         self.assertEqual(result["summary"]["row_count"], 3)
+        top_expense = transactions(self.db, {"direction": "expense", "sort": "amount_desc", "size": "1"})
+        self.assertEqual(top_expense["total"], 1)
+        self.assertEqual(top_expense["items"][0]["amount"], 100.0)
 
     def test_same_order_updates_without_creating_duplicate(self):
         import_bytes(self.db, "支付宝交易明细.csv", alipay_csv())
@@ -92,6 +97,39 @@ class CoreTests(unittest.TestCase):
         with connect(self.db) as connection:
             after = connection.execute("SELECT category FROM transactions").fetchone()[0]
         self.assertEqual(after, "外出就餐")
+
+    def test_school_income_categories(self):
+        base = {"platform": "校内收入", "counterparty": "学校", "description": "", "category_raw": ""}
+        expected = {
+            "博士国家助学金": "助学金",
+            "助研津贴": "助研津贴",
+            "奖学金*": "奖学金",
+            "学生劳务": "劳务收入",
+            "学生资助*": "学生资助",
+        }
+        for raw, category in expected.items():
+            with self.subTest(raw=raw):
+                self.assertEqual(classify({**base, "category_raw": raw}), category)
+
+        import_transactions(
+            self.db,
+            "校内收入.xls",
+            "校内收入",
+            b"school-income-fixture",
+            [
+                Transaction(
+                    platform="校内收入",
+                    transaction_time="2025-09-09 00:00:00",
+                    direction="income",
+                    amount_cents=150000,
+                    category_raw="博士国家助学金",
+                    source_order_id="S001",
+                )
+            ],
+        )
+        filtered = dashboard(self.db, {"platform": "校内收入"})
+        self.assertEqual(filtered["summary"]["row_count"], 1)
+        self.assertEqual(filtered["summary"]["income"], 1500.0)
 
 
 if __name__ == "__main__":

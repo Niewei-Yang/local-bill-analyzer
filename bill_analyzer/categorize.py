@@ -30,6 +30,19 @@ def classify(record: Mapping[str, object], rules: Iterable[Mapping[str, object]]
     text = f"{record.get('counterparty', '')} {record.get('description', '')}".lower()
     raw = str(record.get("category_raw", ""))
 
+    if platform == "校内收入":
+        if "奖学金" in raw:
+            return "奖学金"
+        if "助学金" in raw:
+            return "助学金"
+        if "助研" in raw:
+            return "助研津贴"
+        if "劳务" in raw:
+            return "劳务收入"
+        if "资助" in raw:
+            return "学生资助"
+        return "其他收入"
+
     if platform == "微信":
         if _contains(text, ["月付", "还款", "美团金融"]):
             return "账单还款"

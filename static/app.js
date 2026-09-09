@@ -1,4 +1,11 @@
-const state = { dashboard: null, detailRequest: 0 };
+const state = {
+  dashboard: null,
+  detailRequest: 0,
+  recentRequest: 0,
+  selectedPeriodId: null,
+  recentContext: null,
+  recentPage: 1,
+};
 const palette = ["var(--accent)", "var(--accent-2)", "var(--green)", "var(--pink)", "var(--purple)", "var(--teal)", "var(--red)"];
 const money = new Intl.NumberFormat("zh-CN", { style: "currency", currency: "CNY" });
 const integer = new Intl.NumberFormat("zh-CN", { maximumFractionDigits: 0 });
@@ -82,10 +89,37 @@ function selectedPeriodTitle(period, granularity) {
   return period;
 }
 
+function currentFilterContext() {
+  return {
+    start: $("#startDate").value,
+    end: $("#endDate").value,
+    platform: $("#platformFilter").value,
+  };
+}
+
+function contextParams(context, extra = {}) {
+  const params = new URLSearchParams();
+  if (context?.start) params.set("start", context.start);
+  if (context?.end) params.set("end", context.end);
+  if (context?.platform) params.set("platform", context.platform);
+  Object.entries(extra).forEach(([key, value]) => params.set(key, String(value)));
+  return params;
+}
+
+function clearSelectedPeriod() {
+  state.selectedPeriodId = null;
+  document.querySelectorAll(".trend-period.selected").forEach(node => node.classList.remove("selected"));
+}
+
 function closeTrendDetail() {
   state.detailRequest += 1;
+  state.recentRequest += 1;
   $("#trendDetail").hidden = true;
-  document.querySelectorAll(".trend-period.selected").forEach(node => node.classList.remove("selected"));
+  clearSelectedPeriod();
+  if (!state.dashboard) return;
+  renderAnalysisSections(state.dashboard, null, null);
+  state.recentContext = currentFilterContext();
+  renderRecentPage(state.dashboard.recent, state.dashboard.summary.row_count, 1, 30);
 }
 
 function renderTrendDetail(detail, period, periodIndex, dashboard) {
@@ -95,7 +129,7 @@ function renderTrendDetail(detail, period, periodIndex, dashboard) {
   const unit = unitNames[dashboard.granularity] || "期";
   const bounds = selectedPeriodBounds(period.period, dashboard.granularity, dashboard);
   setText("#trendDetailTitle", selectedPeriodTitle(period.period, dashboard.granularity));
-  setText("#trendDetailMeta", `${bounds.start} 至 ${bounds.end} · ${integer.format(detail.summary.active_days)} 个消费日`);
+  setText("#trendDetailMeta", `${bounds.start} 至 ${bounds.end} · ${integer.format(detail.summary.active_days)} 个消费日 · 下方分析已切换到此时段`);
   setText("#detailNetSpend", money.format(detail.summary.net_spend));
   setText("#detailExpenseCount", `${integer.format(detail.summary.expense_count)} 笔`);
   setText("#detailRefunds", money.format(detail.summary.refunds));
@@ -109,53 +143,45 @@ function renderTrendDetail(detail, period, periodIndex, dashboard) {
     setText("#detailComparison", rate === null ? `${direction} ${money.format(Math.abs(delta))}` : `${direction} ${(rate * 100).toFixed(1)}%`);
   }
 
-  const categoryHost = $("#detailCategories");
-  categoryHost.replaceChildren();
-  const categoryRows = detail.categories.filter(item => item.amount > 0).slice(0, 10);
-  const categoryMax = Math.max(...categoryRows.map(item => item.amount), 1);
-  categoryRows.forEach(item => {
-    const row = make("div", undefined, "detail-category-row");
-    const track = make("div", undefined, "bar-track");
-    const fill = make("div", undefined, "bar-fill");
-    fill.style.width = `${item.amount / categoryMax * 100}%`;
-    track.append(fill);
-    row.append(make("span", item.category), track, make("span", `${money.format(item.amount)} · ${(item.share * 100).toFixed(1)}%`, "number"));
-    categoryHost.append(row);
-  });
-  if (!categoryRows.length) categoryHost.append(make("p", "该时段没有净支出分类", "muted"));
-
-  const merchantHost = $("#detailMerchants");
-  merchantHost.replaceChildren();
-  detail.merchants.slice(0, 8).forEach(item => {
-    const row = make("div", undefined, "rank-row");
-    row.append(make("span", item.merchant), make("strong", money.format(item.amount), "number"));
-    const li = document.createElement("li");
-    li.append(row);
-    merchantHost.append(li);
-  });
-  if (!detail.merchants.length) merchantHost.append(make("li", "该时段没有商户支出", "muted"));
 }
 
 async function openTrendDetail(period, periodIndex, dashboard, group) {
+  const selectionId = `${dashboard.granularity}:${period.period}`;
+  if (state.selectedPeriodId === selectionId) {
+    closeTrendDetail();
+    return;
+  }
   document.querySelectorAll(".trend-period.selected").forEach(node => node.classList.remove("selected"));
   group.classList.add("selected");
+  state.selectedPeriodId = selectionId;
   const panel = $("#trendDetail");
   panel.hidden = false;
   setText("#trendDetailTitle", "正在读取…");
   setText("#trendDetailMeta", "正在汇总该时段的消费构成");
   const bounds = selectedPeriodBounds(period.period, dashboard.granularity, dashboard);
-  const params = new URLSearchParams({ start: bounds.start, end: bounds.end, granularity: "day" });
   const platform = $("#platformFilter").value;
-  if (platform) params.set("platform", platform);
+  const selectionLabel = selectedPeriodTitle(period.period, dashboard.granularity);
+  const context = { ...bounds, platform, label: selectionLabel };
+  const params = contextParams(context, { granularity: "day" });
+  const recentParams = contextParams(context, { page: 1, size: 30 });
+  const topParams = contextParams(context, { page: 1, size: 1, direction: "expense", sort: "amount_desc" });
   const request = ++state.detailRequest;
+  state.recentRequest += 1;
   try {
-    const detail = await api(`/api/dashboard?${params}`);
+    const [detail, recent, topExpense] = await Promise.all([
+      api(`/api/dashboard?${params}`),
+      api(`/api/transactions?${recentParams}`),
+      dashboard.granularity === "day" ? api(`/api/transactions?${topParams}`) : Promise.resolve(null),
+    ]);
     if (request !== state.detailRequest) return;
     renderTrendDetail(detail, period, periodIndex, dashboard);
+    renderAnalysisSections(detail, { label: selectionLabel, granularity: dashboard.granularity }, topExpense?.items?.[0] || null);
+    state.recentContext = context;
+    renderRecentPage(recent.items, recent.total, recent.page, recent.size);
   } catch (error) {
     if (request === state.detailRequest) {
-      setText("#trendDetailTitle", "明细读取失败");
-      setText("#trendDetailMeta", error.message);
+      closeTrendDetail();
+      notice(`时段明细读取失败：${error.message}`, true);
     }
   }
 }
@@ -362,12 +388,33 @@ function fillTable(selector, items, fields) {
   });
 }
 
-function renderTables(data) {
-  fillTable("#merchantTable", data.merchants, [
+function renderMerchants(items) {
+  fillTable("#merchantTable", items, [
     { value: "merchant" }, { value: "platform" }, { value: "count", className: "number" }, { value: item => money.format(item.amount), className: "number" }
   ]);
+}
+
+function renderTopSpend(data, selection, topExpense) {
   const topDays = $("#topDays");
   topDays.replaceChildren();
+  if (selection?.granularity === "day") {
+    setText("#topSpendTitle", "最高支出单笔");
+    setText("#topSpendHint", `${selection.label} · 按单笔支出金额`);
+    if (!topExpense) {
+      topDays.append(make("li", "该日没有支出记录", "muted"));
+      return;
+    }
+    const li = document.createElement("li");
+    const row = make("div", undefined, "rank-row");
+    const merchant = topExpense.counterparty || topExpense.description || "未注明交易对方";
+    row.append(make("span", `${topExpense.transaction_time.slice(11, 16)} · ${merchant}`), make("strong", money.format(topExpense.amount), "number"));
+    li.append(row);
+    if (topExpense.description && topExpense.description !== merchant) li.append(make("small", topExpense.description, "rank-note"));
+    topDays.append(li);
+    return;
+  }
+  setText("#topSpendTitle", "最高支出日");
+  setText("#topSpendHint", selection ? `${selection.label} · 按当日净支出` : "按当日净支出");
   data.top_days.forEach(item => {
     const li = document.createElement("li");
     const row = make("div", undefined, "rank-row");
@@ -375,24 +422,63 @@ function renderTables(data) {
     li.append(row);
     topDays.append(li);
   });
-  const directions = { expense: "支出", income: "收入", neutral: "不计收支" };
-  fillTable("#recentTable", data.recent, [
+  if (!data.top_days.length) topDays.append(make("li", "该时段没有净支出", "muted"));
+}
+
+const directions = { expense: "支出", income: "收入", neutral: "不计收支" };
+
+function renderRecentPage(items, total, page, size) {
+  fillTable("#recentTable", items, [
     { value: "transaction_time" }, { value: "platform" }, { value: item => directions[item.direction] || item.direction },
     { value: "category" }, { value: "counterparty" }, { value: "description" },
     { value: item => money.format(item.amount), className: "number" }
   ]);
+  const pages = Math.max(1, Math.ceil(total / size));
+  state.recentPage = page;
+  const scope = state.recentContext?.label ? `${state.recentContext.label} · ` : "";
+  setText("#recentHint", `${scope}第 ${page}/${pages} 页，共 ${integer.format(total)} 笔`);
+  $("#recentPager").hidden = total <= size;
+  $("#recentPrev").disabled = page <= 1;
+  $("#recentNext").disabled = page >= pages;
+  setText("#recentPageInfo", `第 ${page} / ${pages} 页`);
+}
+
+async function loadRecentPage(page) {
+  const context = state.recentContext || currentFilterContext();
+  const params = contextParams(context, { page, size: 30 });
+  const request = ++state.recentRequest;
+  try {
+    const result = await api(`/api/transactions?${params}`);
+    if (request !== state.recentRequest) return;
+    renderRecentPage(result.items, result.total, result.page, result.size);
+  } catch (error) {
+    if (request === state.recentRequest) notice(error.message, true);
+  }
+}
+
+function renderAnalysisSections(data, selection, topExpense) {
+  const scope = selection ? ` · ${selection.label}` : "";
+  setText("#categoryHint", `净支出金额与占比${scope}`);
+  setText("#heatmapHint", `支出原额，颜色越深金额越高${scope}`);
+  setText("#merchantHint", `按支出交易原额${scope}`);
+  renderCategories(data.categories);
+  renderHeatmap(data.heatmap);
+  renderMerchants(data.merchants);
+  renderTopSpend(data, selection, topExpense);
 }
 
 function renderDashboard(data) {
   state.detailRequest += 1;
+  state.recentRequest += 1;
   $("#trendDetail").hidden = true;
+  clearSelectedPeriod();
   state.dashboard = data;
+  state.recentContext = currentFilterContext();
   renderSummary(data);
   renderPlatforms(data.platforms);
   renderTrend(data);
-  renderCategories(data.categories);
-  renderHeatmap(data.heatmap);
-  renderTables(data);
+  renderAnalysisSections(data, null, null);
+  renderRecentPage(data.recent, data.summary.row_count, 1, 30);
 }
 
 async function loadDashboard() {
@@ -470,6 +556,8 @@ async function uploadFiles(files) {
 
 $("#uploadButton").addEventListener("click", () => $("#fileInput").click());
 $("#closeTrendDetail").addEventListener("click", closeTrendDetail);
+$("#recentPrev").addEventListener("click", () => loadRecentPage(state.recentPage - 1));
+$("#recentNext").addEventListener("click", () => loadRecentPage(state.recentPage + 1));
 $("#fileInput").addEventListener("change", event => uploadFiles([...event.target.files]));
 $("#applyFilters").addEventListener("click", loadDashboard);
 $("#granularity").addEventListener("change", loadDashboard);

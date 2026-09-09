@@ -15,7 +15,7 @@ http://127.0.0.1:8765
 - 微信支付导出的 `.xlsx`
 - 支付宝导出的 `.csv`，自动识别 GB18030/GBK 与 UTF-8 编码
 
-趋势图支持按月、按周和按天查看。点击柱形或横轴时间标签，会展开该时段的净支出、环比、分类构成和主要商户；周统计按周一至周日计算。
+趋势图支持按月、按周和按天查看。点击柱形或横轴时间标签，会把主要支出类别、消费时间热力、商户排行、最高支出和最近交易切换到该时段；再次点击同一时段会取消选择。按天查看时显示最高支出单笔，最近交易超过 30 笔时可以翻页。周统计按周一至周日计算。
 
 数据库默认保存在 `data/bills.db`。原始账单文件不会复制到项目目录，也不会上传网络。
 
@@ -48,6 +48,7 @@ python -m pip install -r requirements.txt
 - 同一订单内容或状态改变时更新原记录。
 - 净支出 = 支出交易原额 − 退款记录金额。
 - 非退款收入不包含退款。
+- 校内收入按税后“实发金额”入账，并使用校内流水号去重。
 - 支付宝优先使用原始分类；微信默认按交易类型、商户和商品关键词分类。
 - 页面中的自定义规则按优先级执行，可立即重算历史数据，也会用于以后导入。
 
@@ -68,7 +69,7 @@ python -m pip install -r requirements.txt
 | `DELETE` | `/api/rules/{id}` | 删除分类规则 |
 | `POST` | `/api/reclassify` | 按当前规则重算全部分类 |
 
-`/api/dashboard` 和 `/api/transactions` 支持查询参数：`start=YYYY-MM-DD`、`end=YYYY-MM-DD`、`platform=微信|支付宝`、`category=分类名`。仪表盘另支持 `granularity=month|week|day`，周以周一为起始日；交易明细另支持 `page`、`size`。
+`/api/dashboard` 和 `/api/transactions` 支持查询参数：`start=YYYY-MM-DD`、`end=YYYY-MM-DD`、`platform=微信|支付宝|校内收入`、`category=分类名`。仪表盘另支持 `granularity=month|week|day`，周以周一为起始日；交易明细另支持 `page`、`size`。
 
 ### 上传文件
 

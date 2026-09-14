@@ -20,6 +20,43 @@ def rule_value(record: Mapping[str, object], field: str) -> str:
     return str(record.get(fields.get(field, field), "")).lower()
 
 
+def _classify_fallback(record: Mapping[str, object]) -> str:
+    """Refine otherwise unclassified records without overriding known categories."""
+    raw = str(record.get("category_raw", ""))
+    merchant = str(record.get("counterparty", "")).lower()
+    description = str(record.get("description", "")).lower()
+    text = f"{merchant} {description}"
+    if raw.startswith("微信红包") or raw in {"转账-退款", "二维码收款"}:
+        return "人情/转账"
+    if raw in {"零钱提现", "零钱充值"}:
+        return "资金调拨"
+    if "还款" in description:
+        return "账单还款"
+    if raw == "保险":
+        return "保险"
+    if raw == "爱车养车":
+        return "交通出行"
+    # Merchant evidence for campus services; opaque personal names stay unknown.
+    if "湖北笑联科技" in merchant or "小麦动力" in merchant:
+        return "校园生活"
+    groups = [
+        ("生活服务", ["打印", "复印", "证照采集", "免押租借充电宝", "共享充电宝", "洗浴", "财税服务"]),
+        ("餐饮", ["肯德基", "麦当劳", "coffee", "昌顺马记", "馄饨", "面食馆", "炸串", "串店", "鲜果", "糕饼", "煎饼", "牛肉粉", "甜品", "米线", "锅包肉", "麻辣烫", "粽子", "蛋烘糕", "牛肠面", "副食", "农夫山泉", "纯净水", "运动饮料", "维他命水", "拿铁", "7-eleven", "7-11", "沃尔玛", "物美", "多点 dmall", "红旗连锁"]),
+        ("骑行/运动", ["健身", "羽毛球", "跑步", "马拉松", "体育", "迪卡侬", "decathlon", "赛事活动", "公路车", "strava", "速痕"]),
+        ("交通出行", ["停车", "车费", "智轨", "滴滴", "顺风车", "无人驾驶蘑菇车", "汽油", "加油", "先充后付", "扫码充电", "新能源充值", "南网电动", "云南交投新能源", "中石化", "中国石化", "铁塔能源", "驾驶证", "交通罚没"]),
+        ("医疗健康", ["医药", "药店"]),
+        ("通讯缴费", ["中国联通", "中国移动", "中国电信"]),
+        ("数码/订阅", ["坚果云", "kimi", "软件订阅", "云空间"]),
+        ("文化娱乐", ["steam", "微信豆", "哔哩哔哩直播", "棋牌", "桌游", "圆明园", "颐和园", "水长城", "动物园", "植物园", "秀动", "巡演"]),
+        ("旅行住宿", ["招待所", "民宿"]),
+        ("购物", ["名创优品", "kk-store", "文具店", "微信小店", "商贸", "贸易有限公司", "商店", "钢化膜", "眼镜", "球根", "编织网", "补差价专用"]),
+    ]
+    for category, words in groups:
+        if _contains(text, words):
+            return category
+    return "其他"
+
+
 def classify(record: Mapping[str, object], rules: Iterable[Mapping[str, object]] = ()) -> str:
     for rule in rules:
         pattern = str(rule.get("pattern", "")).strip().lower()
@@ -70,7 +107,7 @@ def classify(record: Mapping[str, object], rules: Iterable[Mapping[str, object]]
             return "人情/转账"
         if _contains(text, ["游戏", "电影", "音乐", "演出", "图书", "公园", "景区", "参考消息"]):
             return "文化娱乐"
-        return "其他"
+        return _classify_fallback(record)
 
     if _contains(text, ["自行车", "单车", "骑行", "链条", "码表", "把立", "羽毛球", "跑步", "运动", "迪卡侬", "黑鸟"]):
         return "骑行/运动"
@@ -85,7 +122,7 @@ def classify(record: Mapping[str, object], rules: Iterable[Mapping[str, object]]
             return "宠物"
         if _contains(text, ["羽毛球", "跑步", "运动", "迪卡侬"]):
             return "骑行/运动"
-        return "其他"
+        return _classify_fallback(record)
     return {
         "餐饮美食": "餐饮",
         "交通出行": "交通出行",
@@ -105,5 +142,4 @@ def classify(record: Mapping[str, object], rules: Iterable[Mapping[str, object]]
         "商业服务": "生活服务",
         "转账红包": "人情/转账",
         "投资理财": "资金调拨",
-        "其他": "其他",
-    }.get(raw, "其他")
+    }.get(raw, _classify_fallback(record))

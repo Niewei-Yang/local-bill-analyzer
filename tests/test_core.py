@@ -132,5 +132,48 @@ class CoreTests(unittest.TestCase):
         self.assertEqual(filtered["summary"]["income"], 1500.0)
 
 
+class CategoryFallbackTests(unittest.TestCase):
+    def test_missing_categories_and_refunds(self):
+        cases = [
+            ("微信", "商户消费", "湖北笑联科技有限公司", "/", "校园生活"),
+            ("微信", "商户消费", "要打印", "取件单号", "生活服务"),
+            ("微信", "商户消费", "三吨片健身工作室", "/", "骑行/运动"),
+            ("微信", "商户消费", "Cotti Coffee", "美式", "餐饮"),
+            ("微信", "微信红包（群红包）", "朋友", "/", "人情/转账"),
+            ("微信", "转账-退款", "/", "微信转账", "人情/转账"),
+            ("微信", "零钱提现", "银行", "/", "资金调拨"),
+            ("支付宝", "信用借还", "花呗", "自动还款", "账单还款"),
+            ("支付宝", "退款", "滴滴顺风车", "退款-费用", "交通出行"),
+            ("支付宝", "退款", "店铺", "退款-Strava会员订阅", "骑行/运动"),
+            ("支付宝", "其他", "上海亦净网络科技有限公司", "坚果云专业版", "数码/订阅"),
+            ("支付宝", "保险", "保险公司", "意外险", "保险"),
+        ]
+        for platform, raw, merchant, description, expected in cases:
+            with self.subTest(merchant=merchant, raw=raw):
+                self.assertEqual(classify(dict(platform=platform, category_raw=raw,
+                    counterparty=merchant, description=description)), expected)
+
+    def test_ambiguous_records_and_keyword_conflicts(self):
+        cases = [
+            ("习惯就好", "/", "其他"),
+            ("麦穗", "/", "其他"),
+            ("云免押", "关闭订单解冻", "其他"),
+            ("中国石化北京石油", "运动饮料西柚味600ml", "餐饮"),
+            ("搜电科技", "免押租借充电宝", "生活服务"),
+            ("微信小店", "购买充电宝", "购物"),
+        ]
+        for merchant, description, expected in cases:
+            with self.subTest(merchant=merchant):
+                self.assertEqual(classify(dict(platform="微信", category_raw="商户消费",
+                    counterparty=merchant, description=description)), expected)
+
+    def test_existing_category_and_custom_rule_take_precedence(self):
+        record = dict(platform="支付宝", category_raw="日用百货",
+                      counterparty="沃尔玛", description="订单")
+        self.assertEqual(classify(record), "购物")
+        rule = dict(field="counterparty", pattern="沃尔玛", category="日常采购")
+        self.assertEqual(classify(record, [rule]), "日常采购")
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -2,9 +2,12 @@ const state = {
   dashboard: null,
   detailRequest: 0,
   recentRequest: 0,
+  growthDayRequest: 0,
   selectedPeriodId: null,
   recentContext: null,
   recentPage: 1,
+  monthlyBudget: 4500,
+  growthContext: null,
 };
 const palette = ["var(--accent)", "var(--accent-2)", "var(--green)", "var(--pink)", "var(--purple)", "var(--teal)", "var(--red)"];
 const money = new Intl.NumberFormat("zh-CN", { style: "currency", currency: "CNY" });
@@ -89,6 +92,135 @@ function selectedPeriodTitle(period, granularity) {
   return period;
 }
 
+function periodBudget(period, granularity, monthlyBudget = state.monthlyBudget) {
+  if (granularity === "month") return monthlyBudget;
+  let budget = 0;
+  for (let i = 0; i < 7; i += 1) {
+    const date = new Date(`${addDays(period, i)}T00:00:00Z`);
+    const days = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth() + 1, 0)).getUTCDate();
+    budget += monthlyBudget / days;
+  }
+  return Math.round(budget * 100) / 100;
+}
+
+function cumulativeDailyPoints(trend, bounds) {
+  const amounts = new Map(trend.map(item => [item.period, Math.round(item.total * 100)]));
+  const points = [];
+  let cents = 0;
+  for (let day = bounds.start; day <= bounds.end; day = addDays(day, 1)) {
+    const daily = amounts.get(day) || 0;
+    cents += daily;
+    points.push({ day, daily: daily / 100, total: cents / 100 });
+  }
+  return points;
+}
+
+function clearGrowthDay() {
+  state.growthDayRequest += 1;
+  $("#growthDayDetail").hidden = true;
+  document.querySelectorAll(".growth-point.selected").forEach(dot => {
+    dot.classList.remove("selected");
+    dot.setAttribute("aria-pressed", "false");
+  });
+}
+
+async function openGrowthDay(point, dot, platform) {
+  clearGrowthDay();
+  const request = state.growthDayRequest;
+  dot.classList.add("selected");
+  dot.setAttribute("aria-pressed", "true");
+  $("#growthDayDetail").hidden = false;
+  setText("#growthDayTitle", `${point.day} 消费明细`);
+  setText("#growthDaySummary", "正在读取当天支出和退款…");
+  $("#growthDayTable").replaceChildren();
+  try {
+    const items = [];
+    let page = 1;
+    let total = 0;
+    do {
+      const params = contextParams({ start: point.day, end: point.day, platform }, { page, size: 200 });
+      const result = await api(`/api/transactions?${params}`);
+      if (request !== state.growthDayRequest) return;
+      items.push(...result.items);
+      total = result.total;
+      page += 1;
+      if (!result.items.length) break;
+    } while (items.length < total);
+    const rows = items.filter(item => item.direction === "expense" || item.is_refund);
+    const expenses = rows.filter(item => item.direction === "expense");
+    const refunds = rows.filter(item => item.is_refund);
+    const amount = list => list.reduce((sum, item) => sum + item.amount_cents, 0) / 100;
+    setText("#growthDaySummary", rows.length
+      ? `${expenses.length} 笔支出 ${money.format(amount(expenses))} · ${refunds.length} 笔退款 ${money.format(amount(refunds))} · 当日净支出 ${money.format(amount(expenses) - amount(refunds))}`
+      : "当天没有支出或退款，累计净支出保持不变。");
+    fillTable("#growthDayTable", rows, [
+      { value: item => item.transaction_time.slice(11) }, { value: "platform" },
+      { value: item => item.is_refund ? "退款" : "支出" },
+      { value: "counterparty" }, { value: "description" }, { value: "category" },
+      { value: item => `${item.is_refund ? "−" : ""}${money.format(item.amount)}`, className: "number" },
+    ]);
+  } catch (error) {
+    if (request === state.growthDayRequest) setText("#growthDaySummary", `读取失败：${error.message}。请再次点击圆点重试。`);
+  }
+}
+
+function renderDailyGrowth(detail, period, dashboard, bounds, preserveDay = false) {
+  const selectedDay = preserveDay ? $(".growth-point.selected")?.dataset.day : null;
+  if (!preserveDay) clearGrowthDay();
+  state.growthContext = { detail, period, dashboard, bounds };
+  const panel = $("#dailyGrowthPanel");
+  panel.hidden = !["month", "week"].includes(dashboard.granularity);
+  const svg = $("#dailyGrowthChart");
+  svg.replaceChildren();
+  if (panel.hidden) return;
+  const budget = periodBudget(period.period, dashboard.granularity);
+  const points = cumulativeDailyPoints(detail.trend, bounds);
+  const monthly = dashboard.granularity === "month";
+  const latest = points.at(-1)?.total || 0;
+  setText("#dailyGrowthMeta", `${monthly ? "月" : "周"}额度 ${money.format(budget)} · 累计 ${money.format(latest)} · ${latest > budget ? "超出" : "剩余"} ${money.format(Math.abs(budget - latest))}${monthly ? "" : `（${money.format(state.monthlyBudget)} ÷ 当月天数，按周一至周日逐日相加）`}`);
+  const describe = point => `${point.day} · 当日净支出 ${money.format(point.daily)} · 累计净支出 ${money.format(point.total)}`;
+  setText("#dailyGrowthPoint", points.length ? describe(points.find(point => point.day === selectedDay) || points.at(-1)) : "暂无数据");
+  const width = 900, height = 300;
+  const margin = { left: 65, right: 24, top: 36, bottom: 38 };
+  svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
+  const minimum = Math.min(0, ...points.map(point => point.total));
+  const maximum = Math.max(budget, ...points.map(point => point.total));
+  const axis = adaptiveAxis(maximum - minimum);
+  const low = Math.floor(minimum / axis.step) * axis.step;
+  const high = Math.max(low + axis.step, Math.ceil(maximum / axis.step) * axis.step);
+  const x = index => margin.left + index / Math.max(1, points.length - 1) * (width - margin.left - margin.right);
+  const y = value => height - margin.bottom - (value - low) / (high - low) * (height - margin.top - margin.bottom);
+  for (let value = low; value <= high; value += axis.step) {
+    svg.append(svgNode("line", { x1: margin.left, x2: width - margin.right, y1: y(value), y2: y(value), class: "chart-grid" }));
+    svg.append(svgNode("text", { x: margin.left - 10, y: y(value) + 4, "text-anchor": "end", class: "chart-muted" }, compactAmount(value)));
+  }
+  svg.append(svgNode("line", { x1: margin.left, x2: width - margin.right, y1: y(budget), y2: y(budget), class: "growth-budget" }));
+  svg.append(svgNode("text", { x: width - margin.right, y: y(budget) - 9, "text-anchor": "end", class: "growth-budget-label" }, `${monthly ? "月" : "周"}额度 ${money.format(budget)}`));
+  svg.append(svgNode("path", { d: points.map((point, index) => `${index ? "L" : "M"}${x(index)},${y(point.total)}`).join(" "), class: "growth-line" }));
+  points.forEach((point, index) => {
+    const dot = svgNode("circle", { cx: x(index), cy: y(point.total), r: 4, class: "growth-point", tabindex: "0", role: "button", "aria-pressed": "false", "aria-label": `${describe(point)}，点击查看消费明细` });
+    dot.dataset.day = point.day;
+    if (point.day === selectedDay) {
+      dot.classList.add("selected");
+      dot.setAttribute("aria-pressed", "true");
+    }
+    dot.append(svgNode("title", {}, describe(point)));
+    ["mouseenter", "focus", "click"].forEach(event => dot.addEventListener(event, () => setText("#dailyGrowthPoint", describe(point))));
+    const platform = $("#platformFilter").value;
+    dot.addEventListener("click", () => openGrowthDay(point, dot, platform));
+    dot.addEventListener("keydown", event => {
+      if (event.key === "Enter" || event.key === " ") {
+        event.preventDefault();
+        openGrowthDay(point, dot, platform);
+      }
+    });
+    svg.append(dot);
+    if (index % Math.max(1, Math.ceil(points.length / 8)) === 0 || index === points.length - 1) {
+      svg.append(svgNode("text", { x: x(index), y: height - 13, "text-anchor": "middle", class: "chart-muted" }, point.day.slice(5)));
+    }
+  });
+}
+
 function currentFilterContext() {
   return {
     start: $("#startDate").value,
@@ -112,6 +244,7 @@ function clearSelectedPeriod() {
 }
 
 function closeTrendDetail() {
+  clearGrowthDay();
   state.detailRequest += 1;
   state.recentRequest += 1;
   $("#trendDetail").hidden = true;
@@ -133,6 +266,7 @@ function renderTrendDetail(detail, period, periodIndex, dashboard) {
   setText("#detailNetSpend", money.format(detail.summary.net_spend));
   setText("#detailExpenseCount", `${integer.format(detail.summary.expense_count)} 笔`);
   setText("#detailRefunds", money.format(detail.summary.refunds));
+  renderDailyGrowth(detail, period, dashboard, bounds);
   setText("#detailComparisonLabel", `较上一显示${unit}`);
   if (!previous) {
     setText("#detailComparison", "暂无对比");
@@ -156,6 +290,8 @@ async function openTrendDetail(period, periodIndex, dashboard, group) {
   state.selectedPeriodId = selectionId;
   const panel = $("#trendDetail");
   panel.hidden = false;
+  clearGrowthDay();
+  $("#dailyGrowthPanel").hidden = true;
   setText("#trendDetailTitle", "正在读取…");
   setText("#trendDetailMeta", "正在汇总该时段的消费构成");
   const bounds = selectedPeriodBounds(period.period, dashboard.granularity, dashboard);
@@ -468,6 +604,7 @@ function renderAnalysisSections(data, selection, topExpense) {
 }
 
 function renderDashboard(data) {
+  clearGrowthDay();
   state.detailRequest += 1;
   state.recentRequest += 1;
   $("#trendDetail").hidden = true;
@@ -555,6 +692,32 @@ async function uploadFiles(files) {
 }
 
 $("#uploadButton").addEventListener("click", () => $("#fileInput").click());
+try {
+  const saved = localStorage.getItem("billAnalyzer.monthlyBudget");
+  const value = Number(saved);
+  if (saved !== null && saved.trim() && Number.isFinite(value) && value >= 0 && value <= 1000000000) {
+    state.monthlyBudget = Math.round(value * 100) / 100;
+  }
+} catch { /* The setting remains available when browser storage is disabled. */ }
+$("#monthlyBudget").value = state.monthlyBudget;
+$("#monthlyBudget").addEventListener("input", event => {
+  const input = event.target;
+  if (!input.value.trim() || !input.validity.valid || !Number.isFinite(input.valueAsNumber)) {
+    setText("#budgetHint", "请输入 0～10亿元之间的金额，最多两位小数；当前额度保持不变。");
+    return;
+  }
+  state.monthlyBudget = Math.round(input.valueAsNumber * 100) / 100;
+  try {
+    localStorage.setItem("billAnalyzer.monthlyBudget", String(state.monthlyBudget));
+    setText("#budgetHint", "已保存，月额度及折算后的周额度已更新。");
+  } catch {
+    setText("#budgetHint", "额度已更新；当前浏览器无法保存，刷新后将恢复默认值。");
+  }
+  if (state.growthContext && !$("#trendDetail").hidden && !$("#dailyGrowthPanel").hidden) {
+    const { detail, period, dashboard, bounds } = state.growthContext;
+    renderDailyGrowth(detail, period, dashboard, bounds, true);
+  }
+});
 $("#closeTrendDetail").addEventListener("click", closeTrendDetail);
 $("#recentPrev").addEventListener("click", () => loadRecentPage(state.recentPage - 1));
 $("#recentNext").addEventListener("click", () => loadRecentPage(state.recentPage + 1));

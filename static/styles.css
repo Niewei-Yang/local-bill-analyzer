@@ -76,6 +76,16 @@ input, select { min-height: 38px; border: 1px solid var(--border); border-radius
 .trend-detail-stats article { padding: 12px; border: 1px solid var(--border); border-radius: 9px; background: var(--surface); }
 .trend-detail-stats span { display: block; color: var(--muted); font-size: 12px; }
 .trend-detail-stats strong { display: block; margin-top: 5px; font-size: 18px; font-variant-numeric: tabular-nums; }
+.growth-line { fill: none; stroke: var(--accent); stroke-width: 2.5; }
+.budget-setting { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin: 12px 0; font-size: 13px; }
+.budget-setting input { width: 150px; }
+.growth-point { fill: var(--accent); stroke: var(--surface); stroke-width: 1.5; cursor: pointer; }
+.growth-point:hover, .growth-point:focus { r: 6; outline: none; stroke: var(--text); }
+.growth-budget { stroke: var(--accent-2); stroke-width: 2; stroke-dasharray: 7 5; }
+.growth-budget-label { fill: var(--accent-2); font-size: 12px; font-weight: 600; }
+.growth-point.selected { r: 6; stroke: var(--text); stroke-width: 2.5; }
+.growth-day-detail { margin: 16px 0; padding: 14px; border: 1px solid var(--border); border-radius: 9px; background: var(--surface); }
+.growth-day-table { min-width: 720px; }
 .category-bars { display: grid; gap: 11px; }
 .category-row { display: grid; grid-template-columns: 94px 1fr 112px; gap: 10px; align-items: center; font-size: 13px; }
 .bar-track { height: 14px; background: var(--surface-2); border-radius: 3px; overflow: hidden; }

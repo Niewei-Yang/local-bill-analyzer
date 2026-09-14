@@ -65,6 +65,11 @@
         <div><h2 id="trendTitle">月度支出与构成</h2><p id="trendHint" class="muted">按当前分类规则汇总，末月可能是不完整月份</p></div>
       </div>
       <div id="monthlyLegend" class="legend compact"></div>
+      <div class="budget-setting">
+        <label for="monthlyBudget">月参考额度（元）</label>
+        <input id="monthlyBudget" type="number" min="0" max="1000000000" step="0.01" value="4500" inputmode="decimal" aria-describedby="budgetHint">
+        <span id="budgetHint" class="muted" aria-live="polite">周额度自动折算，设置保存在当前浏览器。</span>
+      </div>
       <div class="chart-scroll"><svg id="monthlyChart" class="monthly-chart" role="img" aria-label="分类支出堆叠柱状图"></svg></div>
       <div id="trendDetail" class="trend-detail" hidden>
         <div class="trend-detail-head">
@@ -76,6 +81,22 @@
           <article><span id="detailComparisonLabel">环比</span><strong id="detailComparison">—</strong></article>
           <article><span>支出笔数</span><strong id="detailExpenseCount">—</strong></article>
           <article><span>退款抵扣</span><strong id="detailRefunds">—</strong></article>
+        </div>
+        <div id="dailyGrowthPanel" hidden>
+          <h3>每日累计净支出</h3>
+          <p id="dailyGrowthMeta" class="muted"></p>
+          <div class="chart-scroll"><svg id="dailyGrowthChart" class="monthly-chart" role="img" aria-label="每日累计净支出与额度辅助线"></svg></div>
+          <p id="dailyGrowthPoint" class="muted" aria-live="polite"></p>
+          <p class="muted">点击曲线圆点，查看当天的支出和退款明细。</p>
+          <section id="growthDayDetail" class="growth-day-detail" hidden>
+            <h3 id="growthDayTitle"></h3>
+            <p id="growthDaySummary" class="muted" aria-live="polite"></p>
+            <div class="table-wrap"><table class="growth-day-table">
+              <thead><tr><th>时间</th><th>平台</th><th>类型</th><th>商户 / 对方</th><th>商品说明</th><th>分类</th><th class="number">金额</th></tr></thead>
+              <tbody id="growthDayTable"></tbody>
+            </table></div>
+          </section>
+          <p class="muted">蓝线为累计净支出，退款会使曲线下降；橙色虚线为整月或整周额度。曲线仅统计当前筛选范围内的账单，无交易日沿用前一天累计值。</p>
         </div>
       </div>
     </section>

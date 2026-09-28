@@ -12,7 +12,16 @@ from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlparse
 
 from bill_analyzer.analytics import dashboard, transactions
-from bill_analyzer.db import add_rule, connect, delete_rule, import_transactions, init_db, list_rules, recent_imports
+from bill_analyzer.db import (
+    add_rule,
+    connect,
+    delete_rule,
+    import_transactions,
+    income_window_start,
+    init_db,
+    list_rules,
+    recent_imports,
+)
 from bill_analyzer.importers import IMPORTERS, UnsupportedBillError
 
 
@@ -25,12 +34,22 @@ MAX_UPLOAD_BYTES = 50 * 1024 * 1024
 def import_bytes(db_path: Path, filename: str, content: bytes) -> dict:
     ranked = sorted(((item.score(filename, content), item) for item in IMPORTERS), key=lambda pair: pair[0], reverse=True)
     if not ranked or ranked[0][0] <= 0:
-        raise UnsupportedBillError("仅支持支付宝 CSV 与微信 XLSX 账单")
+        raise UnsupportedBillError("仅支持支付宝 CSV、微信 XLSX 与校内收入 XLS 账单")
     importer = ranked[0][1]
     records = importer.parse(filename, content)
+    excluded = 0
+    window_start = income_window_start(db_path) if importer.platform == "校内收入" else None
+    if window_start:
+        scoped = [record for record in records if record.transaction_time[:10] >= window_start]
+        excluded = len(records) - len(scoped)
+        records = scoped
     if not records:
+        if excluded:
+            raise ValueError(f"收入记录都早于支出数据的起始月份（{window_start[:7]}），没有可导入的交易")
         raise ValueError("文件中没有可导入的交易记录")
-    return import_transactions(db_path, filename, importer.platform, content, records)
+    result = import_transactions(db_path, filename, importer.platform, content, records)
+    result["excluded"] = excluded
+    return result
 
 
 def import_path(db_path: Path, path: Path) -> dict:
@@ -112,7 +131,7 @@ class BillRequestHandler(BaseHTTPRequestHandler):
                         "database": str(self.db_path),
                         "transaction_count": count,
                         "categories": categories,
-                        "supported_formats": ["支付宝 CSV（GB18030/UTF-8）", "微信 XLSX"],
+                        "supported_formats": ["支付宝 CSV（GB18030/UTF-8）", "微信 XLSX", "校内收入 XLS（学生收入查询）"],
                     }
                 )
             elif parsed.path.startswith("/api/"):

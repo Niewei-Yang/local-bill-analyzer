@@ -1,7 +1,7 @@
 @echo off
 chcp 65001 >nul
 cd /d "%~dp0"
-python -c "import openpyxl" >nul 2>nul
+python -c "import openpyxl, xlrd" >nul 2>nul
 if errorlevel 1 (
   echo 正在安装 Excel 解析依赖...
   python -m pip install -r requirements.txt

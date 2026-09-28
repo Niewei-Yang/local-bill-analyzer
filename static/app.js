@@ -92,25 +92,31 @@ function selectedPeriodTitle(period, granularity) {
   return period;
 }
 
+function dailyBudget(day, monthlyBudget = state.monthlyBudget) {
+  const date = new Date(`${day}T00:00:00Z`);
+  const days = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth() + 1, 0)).getUTCDate();
+  return monthlyBudget / days;
+}
+
 function periodBudget(period, granularity, monthlyBudget = state.monthlyBudget) {
   if (granularity === "month") return monthlyBudget;
   let budget = 0;
   for (let i = 0; i < 7; i += 1) {
-    const date = new Date(`${addDays(period, i)}T00:00:00Z`);
-    const days = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth() + 1, 0)).getUTCDate();
-    budget += monthlyBudget / days;
+    budget += dailyBudget(addDays(period, i), monthlyBudget);
   }
   return Math.round(budget * 100) / 100;
 }
 
-function cumulativeDailyPoints(trend, bounds) {
+function cumulativeDailyPoints(trend, bounds, monthlyBudget = state.monthlyBudget) {
   const amounts = new Map(trend.map(item => [item.period, Math.round(item.total * 100)]));
   const points = [];
   let cents = 0;
+  let planned = 0;
   for (let day = bounds.start; day <= bounds.end; day = addDays(day, 1)) {
     const daily = amounts.get(day) || 0;
     cents += daily;
-    points.push({ day, daily: daily / 100, total: cents / 100 });
+    planned += dailyBudget(day, monthlyBudget);
+    points.push({ day, daily: daily / 100, total: cents / 100, planned: Math.round(planned * 100) / 100 });
   }
   return points;
 }
@@ -146,18 +152,20 @@ async function openGrowthDay(point, dot, platform) {
       page += 1;
       if (!result.items.length) break;
     } while (items.length < total);
-    const rows = items.filter(item => item.direction === "expense" || item.is_refund);
+    const isTransferIncome = item => item.platform === "微信" && item.direction === "income" && !item.is_refund && item.category_raw === "转账";
+    const rows = items.filter(item => item.direction === "expense" || item.is_refund || isTransferIncome(item));
     const expenses = rows.filter(item => item.direction === "expense");
     const refunds = rows.filter(item => item.is_refund);
+    const transfers = rows.filter(isTransferIncome);
     const amount = list => list.reduce((sum, item) => sum + item.amount_cents, 0) / 100;
     setText("#growthDaySummary", rows.length
-      ? `${expenses.length} 笔支出 ${money.format(amount(expenses))} · ${refunds.length} 笔退款 ${money.format(amount(refunds))} · 当日净支出 ${money.format(amount(expenses) - amount(refunds))}`
-      : "当天没有支出或退款，累计净支出保持不变。");
+      ? `${expenses.length} 笔支出 ${money.format(amount(expenses))} · ${refunds.length} 笔退款 ${money.format(amount(refunds))} · ${transfers.length} 笔微信转账收入 ${money.format(amount(transfers))} · 当日净支出 ${money.format(amount(expenses) - amount(refunds) - amount(transfers))}`
+      : "当天没有支出、退款或微信转账收入，累计净支出保持不变。");
     fillTable("#growthDayTable", rows, [
       { value: item => item.transaction_time.slice(11) }, { value: "platform" },
-      { value: item => item.is_refund ? "退款" : "支出" },
+      { value: item => item.is_refund ? "退款" : isTransferIncome(item) ? "微信转账收入" : "支出" },
       { value: "counterparty" }, { value: "description" }, { value: "category" },
-      { value: item => `${item.is_refund ? "−" : ""}${money.format(item.amount)}`, className: "number" },
+      { value: item => `${item.is_refund || isTransferIncome(item) ? "−" : ""}${money.format(item.amount)}`, className: "number" },
     ]);
   } catch (error) {
     if (request === state.growthDayRequest) setText("#growthDaySummary", `读取失败：${error.message}。请再次点击圆点重试。`);
@@ -178,13 +186,13 @@ function renderDailyGrowth(detail, period, dashboard, bounds, preserveDay = fals
   const monthly = dashboard.granularity === "month";
   const latest = points.at(-1)?.total || 0;
   setText("#dailyGrowthMeta", `${monthly ? "月" : "周"}额度 ${money.format(budget)} · 累计 ${money.format(latest)} · ${latest > budget ? "超出" : "剩余"} ${money.format(Math.abs(budget - latest))}${monthly ? "" : `（${money.format(state.monthlyBudget)} ÷ 当月天数，按周一至周日逐日相加）`}`);
-  const describe = point => `${point.day} · 当日净支出 ${money.format(point.daily)} · 累计净支出 ${money.format(point.total)}`;
+  const describe = point => `${point.day} · 当日净支出 ${money.format(point.daily)} · 累计净支出 ${money.format(point.total)} · 计划累计 ${money.format(point.planned)} · ${point.total > point.planned ? "超计划" : "低于计划"} ${money.format(Math.abs(point.total - point.planned))}`;
   setText("#dailyGrowthPoint", points.length ? describe(points.find(point => point.day === selectedDay) || points.at(-1)) : "暂无数据");
   const width = 900, height = 300;
   const margin = { left: 65, right: 24, top: 36, bottom: 38 };
   svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
   const minimum = Math.min(0, ...points.map(point => point.total));
-  const maximum = Math.max(budget, ...points.map(point => point.total));
+  const maximum = Math.max(budget, ...points.flatMap(point => [point.total, point.planned]));
   const axis = adaptiveAxis(maximum - minimum);
   const low = Math.floor(minimum / axis.step) * axis.step;
   const high = Math.max(low + axis.step, Math.ceil(maximum / axis.step) * axis.step);
@@ -196,6 +204,7 @@ function renderDailyGrowth(detail, period, dashboard, bounds, preserveDay = fals
   }
   svg.append(svgNode("line", { x1: margin.left, x2: width - margin.right, y1: y(budget), y2: y(budget), class: "growth-budget" }));
   svg.append(svgNode("text", { x: width - margin.right, y: y(budget) - 9, "text-anchor": "end", class: "growth-budget-label" }, `${monthly ? "月" : "周"}额度 ${money.format(budget)}`));
+  svg.append(svgNode("path", { d: points.map((point, index) => `${index ? "L" : "M"}${x(index)},${y(point.planned)}`).join(" "), class: "growth-plan" }));
   svg.append(svgNode("path", { d: points.map((point, index) => `${index ? "L" : "M"}${x(index)},${y(point.total)}`).join(" "), class: "growth-line" }));
   points.forEach((point, index) => {
     const dot = svgNode("circle", { cx: x(index), cy: y(point.total), r: 4, class: "growth-point", tabindex: "0", role: "button", "aria-pressed": "false", "aria-label": `${describe(point)}，点击查看消费明细` });
@@ -266,6 +275,7 @@ function renderTrendDetail(detail, period, periodIndex, dashboard) {
   setText("#detailNetSpend", money.format(detail.summary.net_spend));
   setText("#detailExpenseCount", `${integer.format(detail.summary.expense_count)} 笔`);
   setText("#detailRefunds", money.format(detail.summary.refunds));
+  setText("#detailTransferIncome", money.format(detail.summary.transfer_income));
   renderDailyGrowth(detail, period, dashboard, bounds);
   setText("#detailComparisonLabel", `较上一显示${unit}`);
   if (!previous) {
@@ -679,7 +689,7 @@ async function uploadFiles(files) {
         headers: { "Content-Type": "application/octet-stream", "X-Filename": encodeURIComponent(file.name) },
         body: file
       });
-      messages.push(`${file.name}：新增 ${result.inserted}，更新 ${result.updated}，重复 ${result.unchanged}`);
+      messages.push(`${file.name}：新增 ${result.inserted}，更新 ${result.updated}，重复 ${result.unchanged}${result.excluded ? `，另有 ${result.excluded} 条早于支出时间窗未导入` : ""}`);
     }
     notice(messages.join("；"));
     await Promise.all([loadDashboard(), loadMeta(), loadImports()]);

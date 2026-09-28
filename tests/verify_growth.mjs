@@ -20,11 +20,13 @@ try {
       } else {
         assert.equal(await page.locator('#dailyGrowthPanel').isVisible(), true);
         assert.equal(await page.locator('.growth-budget').count(), 1);
+        assert.equal(await page.locator('.growth-plan').count(), 1);
         const dots = page.locator('.growth-point');
         assert.ok(await dots.count() > 1);
         const meta = await page.locator('#dailyGrowthMeta').textContent();
         if (granularity === 'month') assert.ok(meta.includes('4,500.00'));
         await dots.first().focus();
+        assert.ok((await page.locator('#dailyGrowthPoint').textContent()).includes('计划累计'));
         assert.ok((await dots.first().getAttribute('aria-label')).startsWith(await page.locator('#dailyGrowthPoint').textContent()));
         await dots.first().click();
         await page.waitForFunction(() => !document.querySelector('#growthDaySummary').textContent.includes('正在读取'));
@@ -36,7 +38,9 @@ try {
         assert.equal(await page.locator('#growthDayTable tr').count(), daily.items.filter(item => item.direction === 'expense' || item.is_refund).length);
         assert.ok(!(await page.locator('#growthDaySummary').textContent()).includes('读取失败'));
         const oldRows = await page.locator('#growthDayTable').textContent();
+        const oldPlan = await page.locator('.growth-plan').getAttribute('d');
         await page.fill('#monthlyBudget', '6000');
+        assert.notEqual(await page.locator('.growth-plan').getAttribute('d'), oldPlan);
         assert.equal(await page.locator('#growthDayTable').textContent(), oldRows);
         assert.equal(await page.locator('.growth-point.selected').count(), 1);
         const newBudget = await page.evaluate(() => periodBudget(state.growthContext.period.period, state.growthContext.dashboard.granularity));

@@ -55,6 +55,7 @@ def dashboard(db_path: Path | str, params: dict[str, str]) -> dict:
               MAX(date(transaction_time)) AS end_date,
               SUM(CASE WHEN direction = 'expense' THEN amount_cents ELSE 0 END) AS gross_expense,
               SUM(CASE WHEN is_refund = 1 THEN amount_cents ELSE 0 END) AS refunds,
+              SUM(CASE WHEN platform = '微信' AND direction = 'income' AND is_refund = 0 AND category_raw = '转账' THEN amount_cents ELSE 0 END) AS transfer_income,
               SUM(CASE WHEN direction = 'income' AND is_refund = 0 THEN amount_cents ELSE 0 END) AS income,
               SUM(CASE WHEN direction = 'expense' THEN 1 ELSE 0 END) AS expense_count,
               SUM(CASE WHEN is_refund = 1 THEN 1 ELSE 0 END) AS refund_count,
@@ -68,7 +69,8 @@ def dashboard(db_path: Path | str, params: dict[str, str]) -> dict:
         period_days = _period_days(start_date, end_date)
         gross = summary_row["gross_expense"] or 0
         refunds = summary_row["refunds"] or 0
-        net = gross - refunds
+        transfer_income = summary_row["transfer_income"] or 0
+        net = gross - refunds - transfer_income
         income = summary_row["income"] or 0
 
         expense_amounts = [
@@ -83,7 +85,11 @@ def dashboard(db_path: Path | str, params: dict[str, str]) -> dict:
             middle = len(expense_amounts) // 2
             median = expense_amounts[middle] if len(expense_amounts) % 2 else (expense_amounts[middle - 1] + expense_amounts[middle]) / 2
 
-        signed = "CASE WHEN direction = 'expense' THEN amount_cents WHEN is_refund = 1 THEN -amount_cents ELSE 0 END"
+        signed = (
+            "CASE WHEN direction = 'expense' THEN amount_cents "
+            "WHEN is_refund = 1 OR (platform = '微信' AND direction = 'income' AND category_raw = '转账') "
+            "THEN -amount_cents ELSE 0 END"
+        )
         platforms = connection.execute(
             f"SELECT platform, SUM({signed}) amount FROM transactions {where} GROUP BY platform ORDER BY amount DESC",
             values,
@@ -166,6 +172,7 @@ def dashboard(db_path: Path | str, params: dict[str, str]) -> dict:
             "row_count": summary_row["rows_count"],
             "gross_expense": _money(gross),
             "refunds": _money(refunds),
+            "transfer_income": _money(transfer_income),
             "net_spend": _money(net),
             "income": _money(income),
             "cash_gap": _money(income - net),

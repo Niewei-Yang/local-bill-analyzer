@@ -109,6 +109,16 @@ def init_db(db_path: Path | str) -> None:
         connection.executescript(SCHEMA)
 
 
+def income_window_start(db_path: Path | str) -> str | None:
+    """校内收入只入账与支出数据同一时间窗的记录，返回支出数据最早月份的 1 号。"""
+    with connect(db_path) as connection:
+        row = connection.execute(
+            "SELECT MIN(transaction_time) FROM transactions WHERE platform != '校内收入'"
+        ).fetchone()
+    first = row[0] if row else None
+    return f"{first[:7]}-01" if first else None
+
+
 def list_rules(connection: sqlite3.Connection) -> list[dict]:
     rows = connection.execute(
         "SELECT id, field, pattern, category, priority, enabled, created_at "

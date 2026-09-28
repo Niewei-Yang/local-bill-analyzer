@@ -11,6 +11,7 @@ data/*
 *.csv
 *.xlsx
 *.xls
+!tests/fixtures/*.xls
 
 # Generated visual verification files
 tests/dashboard-*.png

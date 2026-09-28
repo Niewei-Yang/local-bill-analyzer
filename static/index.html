@@ -17,9 +17,9 @@
         <p id="periodText" class="muted">正在读取数据库…</p>
       </div>
       <div class="upload-area">
-        <input id="fileInput" type="file" accept=".xlsx,.csv" multiple hidden>
+        <input id="fileInput" type="file" accept=".xlsx,.csv,.xls" multiple hidden>
         <button id="uploadButton" class="button primary" type="button">导入新账单</button>
-        <p class="micro">支持微信 XLSX、支付宝 CSV</p>
+        <p class="micro">支持微信 XLSX、支付宝 CSV、校内收入 XLS</p>
       </div>
     </header>
 
@@ -49,13 +49,13 @@
 
     <section class="stats" aria-label="账单概览">
       <article class="stat"><span>净支出</span><strong id="netSpend">—</strong><small id="expenseMeta">—</small></article>
-      <article class="stat"><span>非退款收入</span><strong id="income">—</strong><small>退款单独抵扣支出</small></article>
+      <article class="stat"><span>非退款收入</span><strong id="income">—</strong><small>微信转账收入抵扣净支出</small></article>
       <article class="stat"><span>收入减净支出</span><strong id="cashGap">—</strong><small>所选账单期</small></article>
       <article class="stat"><span>日均净支出</span><strong id="dailyAverage">—</strong><small id="medianMeta">—</small></article>
     </section>
 
     <section class="section">
-      <div class="section-title"><div><h2>平台构成</h2><p class="muted">按扣除退款后的净支出</p></div></div>
+      <div class="section-title"><div><h2>平台构成</h2><p class="muted">按扣除退款和微信转账收入后的净支出</p></div></div>
       <div id="platformBar" class="platform-bar" aria-label="平台支出构成"></div>
       <div id="platformLegend" class="legend"></div>
     </section>
@@ -81,13 +81,15 @@
           <article><span id="detailComparisonLabel">环比</span><strong id="detailComparison">—</strong></article>
           <article><span>支出笔数</span><strong id="detailExpenseCount">—</strong></article>
           <article><span>退款抵扣</span><strong id="detailRefunds">—</strong></article>
+          <article><span>微信转账收入抵扣</span><strong id="detailTransferIncome">—</strong></article>
         </div>
         <div id="dailyGrowthPanel" hidden>
           <h3>每日累计净支出</h3>
           <p id="dailyGrowthMeta" class="muted"></p>
-          <div class="chart-scroll"><svg id="dailyGrowthChart" class="monthly-chart" role="img" aria-label="每日累计净支出与额度辅助线"></svg></div>
+          <div class="growth-legend"><span>实际累计净支出</span><span class="plan">计划累计支出</span><span class="budget">整期额度</span></div>
+          <div class="chart-scroll"><svg id="dailyGrowthChart" class="monthly-chart" role="img" aria-label="每日实际累计净支出、计划累计支出及整期额度"></svg></div>
           <p id="dailyGrowthPoint" class="muted" aria-live="polite"></p>
-          <p class="muted">点击曲线圆点，查看当天的支出和退款明细。</p>
+          <p class="muted">点击曲线圆点，查看当天的支出、退款和微信转账收入明细。</p>
           <section id="growthDayDetail" class="growth-day-detail" hidden>
             <h3 id="growthDayTitle"></h3>
             <p id="growthDaySummary" class="muted" aria-live="polite"></p>
@@ -96,7 +98,7 @@
               <tbody id="growthDayTable"></tbody>
             </table></div>
           </section>
-          <p class="muted">蓝线为累计净支出，退款会使曲线下降；橙色虚线为整月或整周额度。曲线仅统计当前筛选范围内的账单，无交易日沿用前一天累计值。</p>
+          <p class="muted">蓝线为实际累计净支出，退款和微信转账收入会使曲线下降；绿色虚线按“月参考额度 ÷ 当月天数”逐日累加，橙色虚线为整月或整周额度。实际与计划均从当前显示范围的首日累计；无交易日实际金额不变，计划继续增长。</p>
         </div>
       </div>
     </section>

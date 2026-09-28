@@ -11,6 +11,7 @@ from app import import_bytes
 from bill_analyzer.analytics import dashboard, transactions
 from bill_analyzer.categorize import classify
 from bill_analyzer.db import add_rule, connect, import_transactions, init_db
+from bill_analyzer.importers import SchoolIncomeImporter
 from bill_analyzer.models import Transaction
 
 
@@ -34,6 +35,10 @@ def wechat_xlsx() -> bytes:
     stream = io.BytesIO()
     workbook.save(stream)
     return stream.getvalue()
+
+
+def school_income_xls() -> bytes:
+    return (Path(__file__).parent / "fixtures" / "studentSRCX-sample.xls").read_bytes()
 
 
 class CoreTests(unittest.TestCase):
@@ -173,6 +178,86 @@ class CategoryFallbackTests(unittest.TestCase):
         self.assertEqual(classify(record), "购物")
         rule = dict(field="counterparty", pattern="沃尔玛", category="日常采购")
         self.assertEqual(classify(record, [rule]), "日常采购")
+
+
+class SchoolIncomeXlsTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.db = Path(self.temp.name) / "test.db"
+        init_db(self.db)
+
+    def tearDown(self):
+        self.temp.cleanup()
+
+    def test_imports_school_income_xls(self):
+        imported = import_bytes(self.db, "studentSRCX20260924.xls", school_income_xls())
+        self.assertEqual(imported["total"], 4)
+        self.assertEqual(imported["inserted"], 4)
+        self.assertEqual(imported["excluded"], 0)
+        with connect(self.db) as connection:
+            rows = {row["source_order_id"]: row for row in connection.execute("SELECT * FROM transactions")}
+        voucher = rows["202603104416"]
+        self.assertEqual(voucher["transaction_time"], "2026-03-08 00:00:00")
+        self.assertEqual(voucher["status"], "已制证")
+        self.assertEqual(voucher["amount_cents"], 312000)
+        self.assertEqual(voucher["category"], "助研津贴")
+        self.assertEqual(voucher["counterparty"], "北京航空航天大学")
+        self.assertEqual(voucher["description"], "测试研究生劳务")
+        self.assertEqual(voucher["payment_method"], "621558xxxxxx863778")
+        self.assertEqual(voucher["merchant_order_id"], "26030118519")
+        self.assertEqual(voucher["note"], "航空发动机研究院；测试科研项目")
+        entry = rows["202601200006"]
+        self.assertEqual(entry["transaction_time"], "2026-01-06 00:00:00")
+        self.assertEqual(entry["status"], "已录入")
+        self.assertEqual(entry["description"], "博士国家助学金")
+        self.assertEqual(entry["category"], "助学金")
+        self.assertEqual(entry["note"], "暂付款；工资助学金")
+        festival = rows["202509200013"]
+        self.assertEqual(festival["transaction_time"], "2025-09-05 00:00:00")
+        self.assertEqual(festival["amount_cents"], 1500)
+        self.assertEqual(festival["category"], "学生资助")
+        self.assertEqual(festival["note"], "")
+        again = import_bytes(self.db, "studentSRCX20260924.xls", school_income_xls())
+        self.assertEqual(again["unchanged"], 4)
+
+    def test_income_scoped_to_expense_window(self):
+        import_transactions(
+            self.db,
+            "微信支付账单.xlsx",
+            "微信",
+            b"expense-window-seed",
+            [
+                Transaction(
+                    platform="微信",
+                    transaction_time="2025-09-09 09:08:10",
+                    direction="expense",
+                    amount_cents=1200,
+                    category_raw="商户消费",
+                    source_order_id="W002",
+                )
+            ],
+        )
+        imported = import_bytes(self.db, "studentSRCX20260924.xls", school_income_xls())
+        self.assertEqual(imported["total"], 3)
+        self.assertEqual(imported["inserted"], 3)
+        self.assertEqual(imported["excluded"], 1)
+        with connect(self.db) as connection:
+            ids = [
+                row[0]
+                for row in connection.execute(
+                    "SELECT source_order_id FROM transactions WHERE platform = '校内收入' ORDER BY source_order_id"
+                )
+            ]
+        # 2025-09-05 的收入与 2025-09-09 的支出同月，保留；2025-08 的一条被时间窗挡下
+        self.assertEqual(ids, ["202509200013", "202601200006", "202603104416"])
+
+    def test_score_targets_xls_income_files(self):
+        importer = SchoolIncomeImporter()
+        content = school_income_xls()
+        self.assertGreater(importer.score("studentSRCX20260924.xls", content), 0)
+        self.assertGreater(importer.score("收入查询.xls", content), 0)
+        self.assertEqual(importer.score("studentSRCX20260924.xlsx", content), 0)
+        self.assertEqual(importer.score("studentSRCX20260924.xls", b"PK\x03\x04 not ole"), 0)
 
 
 if __name__ == "__main__":

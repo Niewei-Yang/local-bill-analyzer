@@ -5,6 +5,7 @@ import io
 from abc import ABC, abstractmethod
 from pathlib import Path
 
+import xlrd
 from openpyxl import load_workbook
 
 from .models import Transaction, clean_text, parse_amount_cents, parse_datetime
@@ -149,7 +150,125 @@ class AlipayImporter(BillImporter):
         return records
 
 
-IMPORTERS: list[BillImporter] = [WeChatImporter(), AlipayImporter()]
+def _cell_value(cell, datemode: int) -> object:
+    if cell.ctype == xlrd.XL_CELL_DATE:
+        return xlrd.xldate_as_datetime(cell.value, datemode)
+    if cell.ctype == xlrd.XL_CELL_NUMBER and float(cell.value).is_integer():
+        return int(cell.value)
+    return cell.value
+
+
+def _parse_when(value: object) -> str | None:
+    text = clean_text(value)
+    if not text.strip("-— "):
+        return None
+    try:
+        return parse_datetime(value)
+    except ValueError:
+        return None
+
+
+def _transaction_time(voucher: str | None, entry: str | None, values: dict) -> str:
+    if voucher or entry:
+        return voucher or entry
+    year = clean_text(values.get("年"))
+    month = clean_text(values.get("月"))
+    if year.isdigit() and month.isdigit():
+        return parse_datetime(f"{year}-{int(month):02d}-01")
+    raise ValueError(f"无法确定入账日期：{values.get('流水号')!r}")
+
+
+def _payer_name(rows: list[list[object]]) -> str:
+    for row in rows:
+        for value in row:
+            text = clean_text(value)
+            if text.startswith("打印单位"):
+                name = text.removeprefix("打印单位").lstrip(":： ").strip()
+                if name:
+                    return name
+    # 导出模板的落款行缺失时按学校入账
+    return "北京航空航天大学"
+
+
+class SchoolIncomeImporter(BillImporter):
+    platform = "校内收入"
+
+    def score(self, filename: str, content: bytes) -> int:
+        if not filename.lower().endswith(".xls"):
+            return 0
+        if not content.startswith(b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"):
+            return 0
+        score = 60
+        if "studentsrcx" in filename.lower():
+            score += 20
+        markers = ("学生收入查询", "流水号", "实发金额")
+        if any(marker.encode("utf-16-le") in content for marker in markers):
+            score += 20
+        return score
+
+    def parse(self, filename: str, content: bytes) -> list[Transaction]:
+        try:
+            workbook = xlrd.open_workbook(file_contents=content)
+        except Exception as exc:
+            raise UnsupportedBillError(f"无法读取 XLS 文件：{exc}") from exc
+        sheet = workbook.sheet_by_index(0)
+        rows = [
+            [_cell_value(sheet.cell(row, column), workbook.datemode) for column in range(sheet.ncols)]
+            for row in range(sheet.nrows)
+        ]
+        header_index = next(
+            (
+                i
+                for i, row in enumerate(rows[:40])
+                if {"流水号", "发放项目", "实发金额"} <= {clean_text(value) for value in row}
+            ),
+            None,
+        )
+        if header_index is None:
+            raise UnsupportedBillError("未找到学生收入查询表头")
+        payer = _payer_name(rows)
+        headers = [clean_text(value) for value in rows[header_index]]
+        records: list[Transaction] = []
+        for row_number, row in enumerate(rows[header_index + 1 :], start=header_index + 2):
+            values = dict(zip(headers, row))
+            if not clean_text(values.get("流水号")):
+                continue
+            try:
+                records.append(self._record(values, payer))
+            except ValueError as exc:
+                raise ValueError(f"{filename} 第 {row_number} 行：{exc}") from exc
+        return records
+
+    def _record(self, values: dict, payer: str) -> Transaction:
+        voucher = _parse_when(values.get("凭证日期"))
+        entry = _parse_when(values.get("录入日期"))
+        amount_cents = parse_amount_cents(values.get("实发金额"))
+        if amount_cents < 0:
+            raise ValueError(f"实发金额不能为负：{values.get('实发金额')!r}")
+        raw = clean_text(values.get("发放项目"))
+        note = "；".join(
+            part
+            for part in (clean_text(values.get("部门名称")), clean_text(values.get("项目名称")))
+            if part
+        )
+        return Transaction(
+            platform=self.platform,
+            transaction_time=_transaction_time(voucher, entry, values),
+            direction="income",
+            amount_cents=amount_cents,
+            category_raw=raw,
+            counterparty=payer,
+            description=clean_text(values.get("摘要")) or raw,
+            payment_method=clean_text(values.get("银行账号")),
+            status="已制证" if voucher else "已录入",
+            source_order_id=clean_text(values.get("流水号")),
+            merchant_order_id=clean_text(values.get("凭证内码")),
+            note=note,
+            is_refund=0,
+        )
+
+
+IMPORTERS: list[BillImporter] = [WeChatImporter(), AlipayImporter(), SchoolIncomeImporter()]
 
 
 def choose_importer(filename: str, content: bytes) -> BillImporter:

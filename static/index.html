@@ -85,7 +85,12 @@
         <input id="monthlyBudget" type="number" min="0" max="1000000000" step="0.01" value="4500" inputmode="decimal" aria-describedby="budgetHint">
         <span id="budgetHint" class="muted" aria-live="polite">周额度自动折算，设置保存在当前浏览器。</span>
       </div>
-      <div class="chart-scroll"><svg id="monthlyChart" class="monthly-chart" role="img" aria-label="分类支出堆叠柱状图"></svg></div>
+      <nav class="trend-pager" aria-label="趋势图翻页">
+        <button id="trendPrev" class="button ghost" type="button" aria-controls="monthlyChart" disabled>← 更早</button>
+        <span id="trendPageInfo" class="muted" aria-live="polite"></span>
+        <button id="trendNext" class="button ghost" type="button" aria-controls="monthlyChart" disabled>更近 →</button>
+      </nav>
+      <div class="trend-chart"><svg id="monthlyChart" class="monthly-chart" role="img" aria-label="分类支出堆叠柱状图"></svg></div>
       <div id="trendDetail" class="trend-detail" hidden>
         <div class="trend-detail-head">
           <div><p class="micro">选中时段</p><h3 id="trendDetailTitle">—</h3><p id="trendDetailMeta" class="muted">—</p></div>

@@ -10,6 +10,8 @@ const state = {
   recentPage: 1,
   monthlyBudget: 4500,
   growthContext: null,
+  trendPage: 0,
+  trendData: null,
 };
 const palette = ["var(--accent)", "var(--accent-2)", "var(--green)", "var(--pink)", "var(--purple)", "var(--teal)", "var(--red)"];
 const money = new Intl.NumberFormat("zh-CN", { style: "currency", currency: "CNY" });
@@ -433,32 +435,45 @@ function monthlySchoolIncomePeriods(periods, dailyIncome = []) {
 }
 
 function renderTrend(data) {
+  state.trendData = data;
   const svg = $("#monthlyChart");
   svg.replaceChildren();
+  delete svg.dataset.axisMin;
+  delete svg.dataset.axisMax;
   const granularity = data.granularity || "month";
   const sourcePeriods = data.trend || data.monthly || [];
-  const periods = granularity === "month" ? monthlySchoolIncomePeriods(sourcePeriods, data.school_income_daily) : sourcePeriods;
-  const chartData = { ...data, trend: periods };
+  const allPeriods = granularity === "month" ? monthlySchoolIncomePeriods(sourcePeriods, data.school_income_daily) : sourcePeriods;
+  const chartData = { ...data, trend: allPeriods };
+  const pageCount = Math.max(1, Math.ceil(allPeriods.length / 7));
+  state.trendPage = Math.max(0, Math.min(state.trendPage, pageCount - 1));
+  const end = allPeriods.length - state.trendPage * 7;
+  const start = Math.max(0, end - 7);
+  const periods = allPeriods.slice(start, end);
+  $("#trendPrev").disabled = state.trendPage >= pageCount - 1;
+  $("#trendNext").disabled = state.trendPage === 0;
+  setText("#trendPageInfo", periods.length
+    ? `${periods[0].period || periods[0].month} 至 ${periods.at(-1).period || periods.at(-1).month} · 第 ${pageCount - state.trendPage} / ${pageCount} 页`
+    : "暂无数据");
   const hasSchoolIncome = periods.some(period => period.school_income > 0);
   const categories = [...new Set(data.trend_categories || data.monthly_categories || [])];
   const labels = {
     month: { title: "月度支出与校内收入", hint: "点击月份查看详情，末月可能不完整", aria: "月度分类支出与校内税后收入堆叠柱状图" },
     week: { title: "每周支出与构成", hint: "点击周次查看详细构成，每周从周一开始", aria: "每周分类支出堆叠柱状图" },
-    day: { title: "每日支出与构成", hint: "点击日期查看详细构成，可横向滚动", aria: "每日分类支出堆叠柱状图" }
+    day: { title: "每日支出与构成", hint: "点击日期查看详细构成", aria: "每日分类支出堆叠柱状图" }
   }[granularity];
   setText("#trendTitle", labels.title);
   setText("#trendHint", hasSchoolIncome
     ? `${labels.hint}；紫色负柱及括号数字为校内税后收入，柱顶首行为净支出（未减校内收入）`
     : `${labels.hint}；柱顶数字为净支出，零线下方为类别净抵扣`);
   svg.setAttribute("aria-label", labels.aria);
-  const width = granularity === "day" ? Math.max(920, periods.length * 32 + 90)
-    : granularity === "week" ? Math.max(920, periods.length * 62 + 90) : 920;
+  const width = svg.parentElement.clientWidth || 920;
   const height = 330;
-  const margin = { top: granularity === "month" ? 46 : 28, right: 18, bottom: 48, left: 62 };
+  const narrow = width < 520;
+  svg.classList.toggle("trend-narrow", narrow);
+  const margin = { top: granularity === "month" ? 46 : 28, right: narrow ? 12 : 18, bottom: 48, left: narrow ? 48 : 62 };
   const innerWidth = width - margin.left - margin.right;
   const innerHeight = height - margin.top - margin.bottom;
   svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
-  svg.style.minWidth = `${width}px`;
   svg.append(svgNode("title", {}, labels.aria));
   const legend = $("#monthlyLegend");
   legend.replaceChildren();
@@ -483,6 +498,8 @@ function renderTrend(data) {
   const axis = adaptiveAxis(maximum - minimum);
   const low = Math.floor(minimum / axis.step) * axis.step;
   const high = Math.max(low + axis.step, Math.ceil(maximum / axis.step) * axis.step);
+  svg.dataset.axisMin = low;
+  svg.dataset.axisMax = high;
   const y = value => margin.top + innerHeight - (value - low) / (high - low) * innerHeight;
   const band = innerWidth / periods.length;
   const barWidth = Math.max(8, Math.min(112, band * .62));
@@ -494,11 +511,10 @@ function renderTrend(data) {
   }
 
   const periodLabel = value => {
-    if (granularity === "month") return value;
+    if (granularity === "month") return narrow ? `${Number(value.slice(5, 7))}月` : value;
     const [, month, day] = value.split("-");
-    return granularity === "week" ? `${month}/${day}周` : `${month}-${day}`;
+    return granularity === "week" ? `${month}/${day}${narrow ? "" : "周"}` : `${month}-${day}`;
   };
-  const labelEvery = granularity === "day" ? 7 : 1;
 
   periods.forEach((period, periodIndex) => {
     const periodKey = period.period || period.month;
@@ -506,9 +522,9 @@ function renderTrend(data) {
     const bandX = margin.left + band * periodIndex;
     const x = margin.left + band * periodIndex + (band - barWidth) / 2;
     const group = svgNode("g", {
-      class: "trend-period", tabindex: "0", role: "button",
+      class: `trend-period${state.selectedPeriodId === `${granularity}:${periodKey}` ? " selected" : ""}`, tabindex: "0", role: "button",
       "data-period": periodKey,
-      "aria-label": `${periodLabel(periodKey)}，净支出 ${money.format(period.total)}${period.school_income ? `，校内税后收入 ${money.format(period.school_income)}` : ""}，点击查看详细构成`
+      "aria-label": `${periodKey}，净支出 ${money.format(period.total)}${period.school_income ? `，校内税后收入 ${money.format(period.school_income)}` : ""}，点击查看详细构成`
     });
     group.append(svgNode("rect", {
       x: bandX, y: margin.top, width: band, height: innerHeight + 36, class: "trend-hit"
@@ -539,33 +555,40 @@ function renderTrend(data) {
       rect.append(svgNode("title", {}, `${periodKey} · 校内税后收入：${money.format(period.school_income)}（图中记为负值）`));
       group.append(rect);
     }
-    if (granularity !== "day" || periods.length <= 35 || periodIndex % labelEvery === 0 || periodIndex === periods.length - 1) {
-      const label = svgNode("text", { x: x + barWidth / 2, y: y(positive) - (granularity === "month" ? 25 : 7), "text-anchor": "middle", class: "chart-label trend-net-label", "data-total": period.total }, Math.abs(period.total) >= 1000 ? `${(period.total / 1000).toFixed(2)}k` : period.total.toFixed(0));
-      label.append(svgNode("title", {}, `净支出 ${money.format(period.total)}${hasSchoolIncome ? "（未减校内收入）" : ""}`));
-      group.append(label);
-      if (granularity === "month") {
-        const income = period.school_income || 0;
-        const incomeLabel = svgNode("text", {
-          x: x + barWidth / 2, y: y(positive) - 7, "text-anchor": "middle",
-          class: "chart-label trend-income-label", "data-income": income,
-        }, `（${income >= 1000 ? `${(income / 1000).toFixed(1)}k` : income.toFixed(0)}）`);
-        incomeLabel.append(svgNode("title", {}, `校内税后收入 ${money.format(income)}`));
-        group.append(incomeLabel);
-      }
+    const label = svgNode("text", { x: x + barWidth / 2, y: y(positive) - (granularity === "month" ? 25 : 7), "text-anchor": "middle", class: "chart-label trend-net-label", "data-total": period.total }, Math.abs(period.total) >= 1000 ? `${(period.total / 1000).toFixed(2)}k` : period.total.toFixed(0));
+    label.append(svgNode("title", {}, `净支出 ${money.format(period.total)}${hasSchoolIncome ? "（未减校内收入）" : ""}`));
+    group.append(label);
+    if (granularity === "month") {
+      const income = period.school_income || 0;
+      const incomeLabel = svgNode("text", {
+        x: x + barWidth / 2, y: y(positive) - 7, "text-anchor": "middle",
+        class: "chart-label trend-income-label", "data-income": income,
+      }, `（${income >= 1000 ? `${(income / 1000).toFixed(1)}k` : income.toFixed(0)}）`);
+      incomeLabel.append(svgNode("title", {}, `校内税后收入 ${money.format(income)}`));
+      group.append(incomeLabel);
     }
-    if (periodIndex % labelEvery === 0 || periodIndex === periods.length - 1) {
-      group.append(svgNode("text", { x: x + barWidth / 2, y: height - 20, "text-anchor": "middle", class: "chart-label trend-x-label" }, periodLabel(periodKey)));
+    const timeLabel = svgNode("text", { x: x + barWidth / 2, y: height - 20, "text-anchor": "middle", class: "chart-label trend-x-label" }, periodLabel(periodKey));
+    if (narrow && granularity === "month") {
+      timeLabel.append(svgNode("tspan", { x: x + barWidth / 2, dy: 14, class: "trend-year-label" }, periodKey.slice(0, 4)));
     }
-    group.addEventListener("click", () => openTrendDetail(detailPeriod, periodIndex, chartData, group));
+    group.append(timeLabel);
+    group.addEventListener("click", () => openTrendDetail(detailPeriod, start + periodIndex, chartData, group));
     group.addEventListener("keydown", event => {
       if (event.key === "Enter" || event.key === " ") {
         event.preventDefault();
-        openTrendDetail(detailPeriod, periodIndex, chartData, group);
+        openTrendDetail(detailPeriod, start + periodIndex, chartData, group);
       }
     });
     svg.append(group);
   });
   svg.append(svgNode("line", { x1: margin.left, y1: y(0), x2: width - margin.right, y2: y(0), class: "chart-axis" }));
+}
+
+function changeTrendPage(delta) {
+  if (!state.trendData) return;
+  if (!$("#trendDetail").hidden) closeTrendDetail();
+  state.trendPage += delta;
+  renderTrend(state.trendData);
 }
 
 function renderCategories(items) {
@@ -713,6 +736,7 @@ function renderDashboard(data, context) {
   state.recentContext = context;
   renderSummary(data);
   renderPlatforms(data.platforms);
+  state.trendPage = 0;
   renderTrend(data);
   renderAnalysisSections(data, null, null);
   renderRecentPage(data.recent, data.summary.row_count, 1, 30);
@@ -854,6 +878,15 @@ async function importDatabase(file) {
 }
 
 $("#uploadButton").addEventListener("click", () => $("#fileInput").click());
+$("#trendPrev").addEventListener("click", () => changeTrendPage(1));
+$("#trendNext").addEventListener("click", () => changeTrendPage(-1));
+let trendWidth = 0;
+new ResizeObserver(entries => {
+  const width = entries[0].contentRect.width;
+  if (width === trendWidth) return;
+  trendWidth = width;
+  if (state.trendData) renderTrend(state.trendData);
+}).observe($("#monthlyChart").parentElement);
 $("#exportDatabaseButton").addEventListener("click", exportDatabase);
 $("#importDatabaseButton").addEventListener("click", () => $("#databaseFileInput").click());
 $("#databaseFileInput").addEventListener("change", event => {

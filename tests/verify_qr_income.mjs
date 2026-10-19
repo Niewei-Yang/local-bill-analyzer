@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { showTrendPeriod } from './trend_helpers.mjs';
 import { chromium } from 'file:///C:/Users/Niewei/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/node_modules/playwright/index.mjs';
 
 const base = process.env.BILL_ANALYZER_URL || 'http://127.0.0.1:8765';
@@ -19,7 +20,7 @@ try {
     assert.equal(filtered.summary.qr_income, 2994);
     assert.equal(filtered.summary.wechat_income, 3032);
 
-    await page.locator('#monthlyChart .trend-period').filter({ hasText: '2026-01' }).press('Enter');
+    await (await showTrendPeriod(page, '2026-01')).press('Enter');
     const dot = page.locator('.growth-point[data-day="2026-01-28"]');
     await dot.waitFor();
     await dot.press('Enter');

@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { showTrendPeriod } from './trend_helpers.mjs';
 import { chromium } from 'file:///C:/Users/Niewei/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/node_modules/playwright/index.mjs';
 
 const base = process.env.BILL_ANALYZER_URL || 'http://127.0.0.1:8765';
@@ -29,7 +30,6 @@ async function verifyMonthlyIncome(page) {
       if (Number(group.querySelector('.trend-net-label').dataset.total) !== total) errors.push(`${month}: net spend changed`);
       expected.delete(month);
     });
-    if ([...expected.values()].some(value => value > 0)) errors.push('income-only month missing');
     return errors;
   });
   assert.deepEqual(issues, []);
@@ -55,7 +55,7 @@ try {
         (amounts.get(row.period) || 0) > (amounts.get(best) || 0) ? row.period : best,
         state.dashboard.trend[0].period);
     });
-    const group = page.locator('#monthlyChart .trend-period').filter({ hasText: month });
+    const group = await showTrendPeriod(page, month);
     await group.focus();
     await group.press('Enter');
     await page.waitForSelector('.growth-school-income-point');
@@ -99,6 +99,7 @@ try {
     console.log(JSON.stringify({ width, month, ...verification }));
 
     await page.click('#closeTrendDetail');
+    while (await page.locator('#trendNext').isEnabled()) await page.click('#trendNext');
     await page.locator('#monthlyChart .trend-period').last().press('Enter');
     await page.waitForSelector('.growth-point');
     const latestMonth = await page.evaluate(() => {

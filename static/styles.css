@@ -63,11 +63,18 @@ input, select { min-height: 38px; border: 1px solid var(--border); border-radius
 .swatch { width: 10px; height: 10px; display: inline-block; flex: 0 0 auto; }
 .chart-scroll { overflow-x: auto; }
 .monthly-chart { display: block; width: 100%; min-width: 560px; height: auto; }
+.trend-chart .monthly-chart { min-width: 0; }
+.trend-pager { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin: 16px 0 8px; }
+.trend-pager .button { flex-shrink: 0; }
+.trend-pager .button:disabled { opacity: .4; cursor: default; border-color: var(--border); }
+.trend-pager .muted { text-align: center; font-size: 12px; }
 .chart-grid { stroke: var(--border); stroke-width: 1; }
 .chart-axis { stroke: var(--muted); stroke-width: 1; }
 .chart-label { fill: var(--text); font-size: 12px; }
 .trend-income-label { fill: var(--purple); }
+.trend-year-label { fill: var(--muted); font-size: 10px; }
 .chart-muted { fill: var(--muted); font-size: 11px; }
+#monthlyChart.trend-narrow .chart-label, #monthlyChart.trend-narrow .chart-muted { font-size: 10px; }
 .trend-period { cursor: pointer; }
 .trend-period:focus { outline: none; }
 .trend-period .trend-hit { fill: transparent; pointer-events: all; }
@@ -147,6 +154,8 @@ footer { display: flex; justify-content: space-between; gap: 12px; flex-wrap: wr
 }
 
 @media (max-width: 520px) {
+  .trend-pager { gap: 6px; }
+  .trend-pager .button { padding: 8px 10px; font-size: 12px; }
   .shell { width: min(100% - 20px, 1180px); padding-top: 22px; }
   .topbar { align-items: flex-start; flex-direction: column; }
   .topbar-tools { width: 100%; flex-wrap: wrap; gap: 12px; }

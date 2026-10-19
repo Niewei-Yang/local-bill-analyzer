@@ -9,8 +9,9 @@ try {
     page.on('pageerror', error => errors.push(error.message));
     await page.goto('http://127.0.0.1:8765', { waitUntil: 'networkidle' });
     for (const granularity of ['month', 'week', 'day']) {
+      await page.evaluate(() => { window.previousGrowthDashboard = state.dashboard; });
       await page.selectOption('#granularity', granularity);
-      await page.waitForFunction(value => state.dashboard?.granularity === value, granularity);
+      await page.waitForFunction(value => state.dashboard !== window.previousGrowthDashboard && state.dashboard?.granularity === value, granularity);
       const period = page.locator('#monthlyChart .trend-period').nth(1);
       await period.focus();
       await period.press('Enter');

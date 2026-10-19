@@ -6,8 +6,8 @@ async function verifyTrend(page) {
   const issues = await page.evaluate(() => {
     const errors = [];
     const zero = Number(document.querySelector('#monthlyChart .chart-axis').getAttribute('y1'));
-    document.querySelectorAll('#monthlyChart .trend-period').forEach((group, index) => {
-      const period = state.dashboard.trend[index];
+    document.querySelectorAll('#monthlyChart .trend-period').forEach(group => {
+      const period = state.dashboard.trend.find(row => row.period === group.dataset.period) || { period: group.dataset.period, total: 0 };
       const bars = [...group.querySelectorAll('rect[data-category]')];
       const categories = bars.map(bar => bar.dataset.category);
       if (new Set(categories).size !== categories.length) errors.push(`${period.period}: duplicate category`);

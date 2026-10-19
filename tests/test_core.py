@@ -103,6 +103,126 @@ class CoreTests(unittest.TestCase):
             after = connection.execute("SELECT category FROM transactions").fetchone()[0]
         self.assertEqual(after, "外出就餐")
 
+    def test_school_income_daily_is_independent_and_respects_filters(self):
+        records = [
+            Transaction("校内收入", "2026-01-02 10:00:00", "income", 312000),
+            Transaction("校内收入", "2026-01-02 11:00:00", "income", 1501),
+            Transaction("校内收入", "2026-02-03 10:00:00", "income", 80000),
+            Transaction("校内收入", "2026-01-04 10:00:00", "income", 900, is_refund=1),
+            Transaction("微信", "2026-01-03 10:00:00", "income", 20000, category_raw="转账"),
+            Transaction("支付宝", "2026-01-03 12:00:00", "expense", 100000),
+        ]
+        import_transactions(self.db, "income.csv", "测试", b"income-series", records)
+        expected = [{"day": "2026-01-02", "amount": 3135.01}, {"day": "2026-02-03", "amount": 800}]
+        for granularity in ("month", "week", "day"):
+            result = dashboard(self.db, {"granularity": granularity})
+            self.assertEqual(result["school_income_daily"], expected)
+            self.assertEqual(result["summary"]["net_spend"], 791)
+        filtered = dashboard(self.db, {"end": "2026-01-31", "exclude_large_expenses": "true"})
+        self.assertEqual(filtered["school_income_daily"], expected[:1])
+        self.assertEqual(filtered["summary"]["net_spend"], -209)
+        self.assertEqual(dashboard(self.db, {"platform": "微信"})["school_income_daily"], [])
+        self.assertEqual(dashboard(self.db, {"start": "2026-01-03"})["school_income_daily"], expected[1:])
+        self.assertEqual(dashboard(self.db, {"platform": "校内收入"})["school_income_daily"], expected)
+
+    def test_wechat_qr_income_offsets_net_spend_once(self):
+        records = [
+            Transaction("微信", "2026-01-28 12:00:00", "expense", 311380),
+            Transaction("微信", "2026-01-28 13:04:48", "income", 3800, category_raw="转账"),
+            Transaction("微信", "2026-01-28 20:29:35", "income", 299400, category_raw="二维码收款"),
+            Transaction("校内收入", "2026-01-28 10:00:00", "income", 160000),
+            Transaction("支付宝", "2026-01-28 10:00:00", "income", 10000, category_raw="二维码收款"),
+            Transaction("微信", "2026-01-28 10:00:00", "neutral", 20000, category_raw="二维码收款"),
+        ]
+        import_transactions(self.db, "qr.csv", "测试", b"qr-income", records)
+        for granularity in ("month", "week", "day"):
+            with self.subTest(granularity=granularity):
+                result = dashboard(self.db, {"granularity": granularity})
+                self.assertEqual(result["summary"]["transfer_income"], 38)
+                self.assertEqual(result["summary"]["qr_income"], 2994)
+                self.assertEqual(result["summary"]["wechat_income"], 3032)
+                self.assertEqual(result["summary"]["net_spend"], 81.8)
+                for section, key in (("trend", "total"), ("monthly", "total"), ("categories", "amount"), ("platforms", "amount")):
+                    self.assertAlmostEqual(sum(item[key] for item in result[section]), 81.8)
+        filtered = dashboard(self.db, {"exclude_large_expenses": "true"})
+        self.assertEqual(filtered["summary"]["wechat_income"], 3032)
+        self.assertEqual(filtered["summary"]["net_spend"], -3032)
+        self.assertEqual(dashboard(self.db, {"platform": "支付宝"})["summary"]["qr_income"], 0)
+        self.assertEqual(dashboard(self.db, {"start": "2026-01-29"})["summary"]["qr_income"], 0)
+        import_transactions(self.db, "qr-refund.csv", "测试", b"qr-refund", [
+            Transaction("微信", "2026-01-28 23:00:00", "income", 100, category_raw="二维码收款", is_refund=1),
+        ])
+        refunded = dashboard(self.db, {})
+        self.assertEqual(refunded["summary"]["qr_income"], 2994)
+        self.assertEqual(refunded["summary"]["net_spend"], 80.8)
+        self.assertAlmostEqual(sum(item["total"] for item in refunded["trend"]), 80.8)
+
+    def test_exclude_large_expenses_across_statistics_and_details(self):
+        records = [
+            Transaction("微信", "2026-10-01 12:00:00", "expense", 99999, counterparty="小额商户"),
+            Transaction("微信", "2026-10-02 12:00:00", "expense", 100000, counterparty="整千商户"),
+            Transaction("支付宝", "2026-10-03 12:00:00", "expense", 100001, counterparty="大额商户"),
+            Transaction("支付宝", "2026-10-04 12:00:00", "income", 300000),
+            Transaction("支付宝", "2026-10-05 12:00:00", "neutral", 150000, is_refund=1),
+            Transaction("微信", "2026-10-06 12:00:00", "income", 200000, category_raw="转账"),
+            Transaction("支付宝", "2026-10-07 12:00:00", "neutral", 400000),
+        ]
+        import_transactions(self.db, "threshold.csv", "测试", b"threshold", records)
+        params = {"exclude_large_expenses": "true", "start": "2026-10-01", "end": "2026-10-31"}
+        for granularity in ("month", "week", "day"):
+            with self.subTest(granularity=granularity):
+                result = dashboard(self.db, {**params, "granularity": granularity})
+                summary = result["summary"]
+                self.assertEqual(summary["row_count"], 5)
+                self.assertEqual(summary["gross_expense"], 999.99)
+                self.assertEqual(summary["expense_count"], 1)
+                self.assertEqual(summary["median_expense"], 999.99)
+                self.assertEqual(summary["income"], 5000)
+                self.assertEqual(summary["refunds"], 1500)
+                self.assertEqual(summary["transfer_income"], 2000)
+                for section, key in (("trend", "total"), ("categories", "amount"), ("platforms", "amount")):
+                    self.assertAlmostEqual(sum(item[key] for item in result[section]), summary["net_spend"])
+                self.assertAlmostEqual(sum(item["amount"] for item in result["heatmap"]), 999.99)
+                self.assertEqual([item["merchant"] for item in result["merchants"]], ["小额商户"])
+                self.assertEqual(result["top_days"], [{"date": "2026-10-01", "amount": 999.99}])
+                self.assertTrue(all(item["amount"] < 1000 for item in result["recent"] if item["direction"] == "expense"))
+
+        first = transactions(self.db, {**params, "size": "2"})
+        second = transactions(self.db, {**params, "size": "2", "page": "2"})
+        third = transactions(self.db, {**params, "size": "2", "page": "3"})
+        self.assertEqual(first["total"], 5)
+        self.assertEqual(len({item["id"] for page in (first, second, third) for item in page["items"]}), 5)
+        top = transactions(self.db, {**params, "direction": "expense", "sort": "amount_desc", "size": "1"})
+        self.assertEqual(top["items"][0]["amount"], 999.99)
+        wechat = transactions(self.db, {**params, "platform": "微信", "category": top["items"][0]["category"], "direction": "expense"})
+        self.assertEqual(wechat["total"], 1)
+        empty = {**params, "start": "2026-10-02", "end": "2026-10-03"}
+        self.assertEqual(dashboard(self.db, empty)["summary"]["row_count"], 0)
+        self.assertEqual(transactions(self.db, empty)["items"], [])
+        self.assertEqual(dashboard(self.db, {})["summary"]["expense_count"], 3)
+        self.assertEqual(transactions(self.db, {"exclude_large_expenses": "false"})["total"], 7)
+
+    def test_trend_other_category_is_counted_once_after_filtering(self):
+        records = [Transaction("微信", "2026-10-01 12:00:00", "expense", 50000, category_raw="其他")]
+        records += [Transaction("微信", "2026-10-01 12:00:00", "expense", (8-i)*1000, category_raw=f"分类{i}") for i in range(7)]
+        records += [
+            Transaction("微信", "2026-10-01 12:00:00", "expense", 1000000, category_raw="大额支出"),
+            Transaction("微信", "2026-10-01 12:00:00", "neutral", 10000, category_raw="退款类别", is_refund=1),
+        ]
+        import_transactions(self.db, "categories.csv", "微信", b"categories", records)
+        with connect(self.db) as connection:
+            connection.execute("UPDATE transactions SET category = category_raw")
+        for params in ({}, {"exclude_large_expenses": "true"}):
+            for granularity in ("month", "week", "day"):
+                with self.subTest(params=params, granularity=granularity):
+                    result = dashboard(self.db, {**params, "granularity": granularity})
+                    for legend_key, periods_key in (("trend_categories", "trend"), ("monthly_categories", "monthly")):
+                        categories = result[legend_key]
+                        self.assertEqual(categories.count("其他"), 1)
+                        self.assertEqual(len(categories), len(set(categories)))
+                        for period in result[periods_key]:
+                            self.assertAlmostEqual(sum(period["categories"].get(category, 0) for category in categories), period["total"])
+
     def test_school_income_categories(self):
         base = {"platform": "校内收入", "counterparty": "学校", "description": "", "category_raw": ""}
         expected = {

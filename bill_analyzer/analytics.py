@@ -6,6 +6,7 @@ from datetime import date, datetime
 from pathlib import Path
 
 from .db import connect
+from .postgres import is_postgres
 
 
 def _money(cents: int | float | None) -> float:
@@ -27,6 +28,8 @@ def _filters(params: dict[str, str]) -> tuple[str, list[str]]:
     if params.get("category"):
         clauses.append("category = ?")
         values.append(params["category"])
+    if params.get("exclude_large_expenses") == "true":
+        clauses.append("NOT (direction = 'expense' AND amount_cents >= 100000)")
     return (" WHERE " + " AND ".join(clauses)) if clauses else "", values
 
 
@@ -46,6 +49,9 @@ def dashboard(db_path: Path | str, params: dict[str, str]) -> dict:
         "week": "date(transaction_time, '-' || ((CAST(strftime('%w', transaction_time) AS INTEGER) + 6) % 7) || ' days')",
         "day": "date(transaction_time)",
     }[granularity]
+    pg = is_postgres(db_path)
+    if pg and granularity == "week":
+        period_sql = "date_trunc('week', transaction_time::timestamp)::date::text"
     with connect(db_path) as connection:
         summary_row = connection.execute(
             f"""
@@ -56,6 +62,7 @@ def dashboard(db_path: Path | str, params: dict[str, str]) -> dict:
               SUM(CASE WHEN direction = 'expense' THEN amount_cents ELSE 0 END) AS gross_expense,
               SUM(CASE WHEN is_refund = 1 THEN amount_cents ELSE 0 END) AS refunds,
               SUM(CASE WHEN platform = '微信' AND direction = 'income' AND is_refund = 0 AND category_raw = '转账' THEN amount_cents ELSE 0 END) AS transfer_income,
+              SUM(CASE WHEN platform = '微信' AND direction = 'income' AND is_refund = 0 AND category_raw = '二维码收款' THEN amount_cents ELSE 0 END) AS qr_income,
               SUM(CASE WHEN direction = 'income' AND is_refund = 0 THEN amount_cents ELSE 0 END) AS income,
               SUM(CASE WHEN direction = 'expense' THEN 1 ELSE 0 END) AS expense_count,
               SUM(CASE WHEN is_refund = 1 THEN 1 ELSE 0 END) AS refund_count,
@@ -70,8 +77,17 @@ def dashboard(db_path: Path | str, params: dict[str, str]) -> dict:
         gross = summary_row["gross_expense"] or 0
         refunds = summary_row["refunds"] or 0
         transfer_income = summary_row["transfer_income"] or 0
-        net = gross - refunds - transfer_income
+        qr_income = summary_row["qr_income"] or 0
+        wechat_income = transfer_income + qr_income
+        net = gross - refunds - wechat_income
         income = summary_row["income"] or 0
+        school_income_daily = connection.execute(
+            f"SELECT date(transaction_time) AS day, SUM(amount_cents) amount "
+            f"FROM transactions {where}{' AND' if where else ' WHERE'} "
+            "platform = '校内收入' AND direction = 'income' AND is_refund = 0 "
+            "GROUP BY day ORDER BY day",
+            values,
+        ).fetchall()
 
         expense_amounts = [
             row[0]
@@ -87,7 +103,7 @@ def dashboard(db_path: Path | str, params: dict[str, str]) -> dict:
 
         signed = (
             "CASE WHEN direction = 'expense' THEN amount_cents "
-            "WHEN is_refund = 1 OR (platform = '微信' AND direction = 'income' AND category_raw = '转账') "
+            "WHEN is_refund = 1 OR (platform = '微信' AND direction = 'income' AND category_raw IN ('转账', '二维码收款')) "
             "THEN -amount_cents ELSE 0 END"
         )
         platforms = connection.execute(
@@ -95,17 +111,17 @@ def dashboard(db_path: Path | str, params: dict[str, str]) -> dict:
             values,
         ).fetchall()
         categories = connection.execute(
-            f"SELECT category, SUM({signed}) amount FROM transactions {where} GROUP BY category HAVING amount != 0 ORDER BY amount DESC",
+            f"SELECT category, SUM({signed}) amount FROM transactions {where} GROUP BY category HAVING SUM({signed}) != 0 ORDER BY amount DESC",
             values,
         ).fetchall()
         trend_rows = connection.execute(
             f"SELECT {period_sql} period_key, category, SUM({signed}) amount "
-            f"FROM transactions {where} GROUP BY period_key, category HAVING amount != 0 ORDER BY period_key, amount DESC",
+            f"FROM transactions {where} GROUP BY period_key, category HAVING SUM({signed}) != 0 ORDER BY period_key, amount DESC",
             values,
         ).fetchall()
         monthly_rows = trend_rows if granularity == "month" else connection.execute(
             f"SELECT substr(transaction_time, 1, 7) period_key, category, SUM({signed}) amount "
-            f"FROM transactions {where} GROUP BY period_key, category HAVING amount != 0 ORDER BY period_key, amount DESC",
+            f"FROM transactions {where} GROUP BY period_key, category HAVING SUM({signed}) != 0 ORDER BY period_key, amount DESC",
             values,
         ).fetchall()
         merchants = connection.execute(
@@ -115,24 +131,25 @@ def dashboard(db_path: Path | str, params: dict[str, str]) -> dict:
             values,
         ).fetchall()
         top_days = connection.execute(
-            f"SELECT date(transaction_time) day, SUM({signed}) amount FROM transactions {where} "
-            "GROUP BY day HAVING amount > 0 ORDER BY amount DESC LIMIT 7",
+            f"SELECT date(transaction_time) AS day, SUM({signed}) amount FROM transactions {where} "
+            f"GROUP BY day HAVING SUM({signed}) > 0 ORDER BY amount DESC LIMIT 7",
             values,
         ).fetchall()
+        weekday_sql = "EXTRACT(DOW FROM transaction_time::timestamp)::int" if pg else "CAST(strftime('%w', transaction_time) AS INTEGER)"
+        hour_sql = "EXTRACT(HOUR FROM transaction_time::timestamp)::int" if pg else "CAST(strftime('%H', transaction_time) AS INTEGER)"
         heat_rows = connection.execute(
-            f"SELECT CAST(strftime('%w', transaction_time) AS INTEGER) weekday, "
-            "CAST(strftime('%H', transaction_time) AS INTEGER) hour, SUM(amount_cents) amount "
+            f"SELECT {weekday_sql} AS weekday, {hour_sql} AS hour, SUM(amount_cents) amount "
             f"FROM transactions {where}{' AND' if where else ' WHERE'} direction = 'expense' GROUP BY weekday, hour",
             values,
         ).fetchall()
         recent = connection.execute(
             f"SELECT id, transaction_time, platform, direction, amount_cents, category, counterparty, description, status "
-            f"FROM transactions {where} ORDER BY transaction_time DESC LIMIT 30",
+            f"FROM transactions {where} ORDER BY transaction_time DESC, id DESC LIMIT 30",
             values,
         ).fetchall()
 
     top_category_names = [row["category"] for row in categories[:7]]
-    trend_category_names = top_category_names + (["其他"] if len(categories) > 7 else [])
+    trend_category_names = top_category_names + (["其他"] if len(categories) > 7 and "其他" not in top_category_names else [])
 
     def group_periods(rows: list[sqlite3.Row], key_name: str) -> list[dict]:
         period_map: dict[str, dict] = {}
@@ -173,6 +190,8 @@ def dashboard(db_path: Path | str, params: dict[str, str]) -> dict:
             "gross_expense": _money(gross),
             "refunds": _money(refunds),
             "transfer_income": _money(transfer_income),
+            "qr_income": _money(qr_income),
+            "wechat_income": _money(wechat_income),
             "net_spend": _money(net),
             "income": _money(income),
             "cash_gap": _money(income - net),
@@ -188,6 +207,9 @@ def dashboard(db_path: Path | str, params: dict[str, str]) -> dict:
             for row in categories
         ],
         "granularity": granularity,
+        "school_income_daily": [
+            {"day": row["day"], "amount": _money(row["amount"])} for row in school_income_daily
+        ],
         "trend_categories": trend_category_names,
         "trend": trend,
         "monthly_categories": trend_category_names,
@@ -220,7 +242,7 @@ def transactions(db_path: Path | str, params: dict[str, str]) -> dict:
     page = max(1, int(params.get("page", "1")))
     size = min(200, max(1, int(params.get("size", "50"))))
     offset = (page - 1) * size
-    order_by = "amount_cents DESC, transaction_time DESC" if params.get("sort") == "amount_desc" else "transaction_time DESC"
+    order_by = "amount_cents DESC, transaction_time DESC, id DESC" if params.get("sort") == "amount_desc" else "transaction_time DESC, id DESC"
     with connect(db_path) as connection:
         total = connection.execute(f"SELECT COUNT(*) FROM transactions {where}", values).fetchone()[0]
         rows = connection.execute(

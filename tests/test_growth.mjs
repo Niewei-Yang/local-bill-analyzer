@@ -5,7 +5,7 @@ import vm from 'node:vm';
 const source = readFileSync(new URL('../static/app.js', import.meta.url), 'utf8');
 const context = vm.createContext({ Intl });
 vm.runInContext(source.split('$("#uploadButton").addEventListener')[0], context);
-const { periodBudget, cumulativeDailyPoints } = vm.runInContext('({ periodBudget, cumulativeDailyPoints })', context);
+const { periodBudget, cumulativeDailyPoints, monthlySchoolIncomePeriods } = vm.runInContext('({ periodBudget, cumulativeDailyPoints, monthlySchoolIncomePeriods })', context);
 assert.equal(periodBudget('2026-04', 'month'), 4500);
 assert.equal(periodBudget('2026-04', 'month', 6000), 6000);
 assert.equal(periodBudget('2026-04-06', 'week', 6000), 1400);
@@ -31,4 +31,25 @@ assert.equal(plan[1].planned, 393.55);
 assert.equal(plan.at(-1).planned, periodBudget('2026-08-31', 'week', 6000));
 assert.equal(cumulativeDailyPoints([], { start: '2026-04-15', end: '2026-04-16' }).at(-1).planned, 300);
 assert.equal(cumulativeDailyPoints([], { start: '2026-04-01', end: '2026-04-30' }, 0).at(-1).planned, 0);
-console.log('Growth calculations passed: budgets, leap year, cross-month week, missing days, refunds, cents.');
+const income = cumulativeDailyPoints([
+  { period: '2026-01-02', total: 20 },
+], { start: '2026-01-01', end: '2026-01-05' }, 4500, [
+  { day: '2025-12-31', amount: 9999 },
+  { day: '2026-01-02', amount: 3120.01 },
+  { day: '2026-01-04', amount: 0.02 },
+]);
+assert.deepEqual(Array.from(income, point => point.schoolIncome), [0, 3120.01, 3120.01, 3120.03, 3120.03]);
+assert.deepEqual(Array.from(income, point => point.dailySchoolIncome), [0, 3120.01, 0, 0.02, 0]);
+assert.deepEqual(Array.from(income, point => point.total), [0, 20, 20, 20, 20]);
+assert.equal(cumulativeDailyPoints([], { start: '2026-02-01', end: '2026-02-01' })[0].schoolIncome, 0);
+const sourcePeriods = [{ period: '2026-02', total: 50, categories: { '餐饮': 50 } }];
+const monthlyIncome = monthlySchoolIncomePeriods(sourcePeriods, [
+  { day: '2026-01-02', amount: 3120.01 }, { day: '2026-01-15', amount: 0.02 },
+  { day: '2026-02-03', amount: 800 }, { day: '2026-03-01', amount: 0 },
+]);
+assert.deepEqual(Array.from(monthlyIncome, row => [row.period, row.total, row.school_income]), [
+  ['2026-01', 0, 3120.03], ['2026-02', 50, 800],
+]);
+assert.equal(sourcePeriods[0].school_income, undefined);
+assert.equal(monthlySchoolIncomePeriods(sourcePeriods)[0].school_income, 0);
+console.log('Growth calculations passed: budgets, leap year, cross-month week, missing days, refunds, cents, independent school income, monthly income aggregation.');

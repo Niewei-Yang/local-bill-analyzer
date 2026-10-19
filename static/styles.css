@@ -29,6 +29,9 @@ h2 { margin-bottom: 4px; font-size: 20px; }
 .muted { color: var(--muted); margin-bottom: 0; }
 .micro, small { color: var(--muted); font-size: 12px; }
 .upload-area { text-align: right; }
+.topbar-tools { display: flex; align-items: flex-end; gap: 20px; }
+.database-area { text-align: right; }
+.database-buttons { display: flex; justify-content: flex-end; gap: 8px; }
 .button { border: 1px solid var(--border); background: var(--surface); color: var(--text); padding: 9px 15px; border-radius: 9px; cursor: pointer; }
 .button:hover { border-color: var(--accent); }
 .button.primary { border-color: var(--accent); background: var(--accent); color: light-dark(#fff, #07111d); }
@@ -38,6 +41,8 @@ h2 { margin-bottom: 4px; font-size: 20px; }
 .notice.error { color: var(--red); }
 .filters { display: flex; align-items: flex-end; gap: 10px; flex-wrap: wrap; margin-bottom: 18px; }
 .filters label, .rule-form label { display: grid; gap: 5px; color: var(--muted); font-size: 12px; }
+.filters .check { display: flex; align-items: center; gap: 7px; min-height: 20px; color: var(--text); cursor: pointer; }
+.filters .check input { min-height: auto; margin: 0; accent-color: var(--accent); }
 input, select { min-height: 38px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--text); padding: 7px 10px; }
 .stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 20px; }
 .stat, .section { background: var(--surface); border: 1px solid var(--border); border-radius: 14px; box-shadow: var(--shadow); }
@@ -77,11 +82,23 @@ input, select { min-height: 38px; border: 1px solid var(--border); border-radius
 .trend-detail-stats span { display: block; color: var(--muted); font-size: 12px; }
 .trend-detail-stats strong { display: block; margin-top: 5px; font-size: 18px; font-variant-numeric: tabular-nums; }
 .growth-line { fill: none; stroke: var(--accent); stroke-width: 2.5; }
+.growth-school-income { fill: none; stroke: var(--purple); stroke-width: 2.5; stroke-dasharray: 5 4; pointer-events: none; }
+.growth-school-income-point { fill: var(--surface); stroke: var(--purple); stroke-width: 2; cursor: pointer; }
+.growth-school-income-point:hover, .growth-school-income-point:focus { r: 6; outline: none; stroke-width: 3; }
 .growth-plan { fill: none; stroke: var(--green); stroke-width: 2.5; stroke-dasharray: 5 4; pointer-events: none; }
 .growth-legend { display: flex; flex-wrap: wrap; gap: 16px; margin: 8px 0; font-size: 13px; }
 .growth-legend span::before { content: ""; display: inline-block; width: 24px; margin-right: 6px; vertical-align: middle; border-top: 3px solid var(--accent); }
 .growth-legend .plan::before { border-top: 3px dashed var(--green); }
 .growth-legend .budget::before { border-top: 3px dashed var(--accent-2); }
+.growth-legend .school-income::before { border-top: 3px dashed var(--purple); }
+.growth-readout { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px 20px; min-height: 24px; margin-top: 10px; padding-top: 12px; border-top: 1px solid var(--border); font-size: 13px; }
+.growth-readout-date { color: var(--text); font-weight: 600; }
+.growth-readout-item { display: inline-flex; flex-wrap: wrap; gap: 6px; align-items: baseline; }
+.growth-readout-item strong { color: var(--text); font-weight: 500; font-variant-numeric: tabular-nums; }
+.growth-notes { margin-top: 10px; color: var(--muted); font-size: 12px; }
+.growth-notes > summary { display: list-item; width: fit-content; font-size: 12px; }
+.growth-notes[open] > summary { margin-bottom: 8px; }
+.growth-notes p { margin: 6px 0; line-height: 1.6; }
 .budget-setting { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin: 12px 0; font-size: 13px; }
 .budget-setting input { width: 150px; }
 .growth-point { fill: var(--accent); stroke: var(--surface); stroke-width: 1.5; cursor: pointer; }
@@ -131,8 +148,11 @@ footer { display: flex; justify-content: space-between; gap: 12px; flex-wrap: wr
 @media (max-width: 520px) {
   .shell { width: min(100% - 20px, 1180px); padding-top: 22px; }
   .topbar { align-items: flex-start; flex-direction: column; }
+  .topbar-tools { width: 100%; flex-wrap: wrap; gap: 12px; }
   .upload-area { text-align: left; width: 100%; }
   .upload-area .button { width: 100%; }
+  .database-area { width: 100%; text-align: left; }
+  .database-buttons { justify-content: flex-start; }
   .stats { grid-template-columns: 1fr; }
   .section { padding: 15px; }
   .category-row { grid-template-columns: 80px 1fr 88px; gap: 7px; }

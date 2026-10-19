@@ -3,9 +3,12 @@ from __future__ import annotations
 import argparse
 import json
 import mimetypes
+import os
 import sys
+import tempfile
 import threading
 import webbrowser
+from datetime import datetime
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -14,6 +17,7 @@ from urllib.parse import parse_qs, unquote, urlparse
 from bill_analyzer.analytics import dashboard, transactions
 from bill_analyzer.db import (
     add_rule,
+    backup_database,
     connect,
     delete_rule,
     import_transactions,
@@ -21,14 +25,18 @@ from bill_analyzer.db import (
     init_db,
     list_rules,
     recent_imports,
+    restore_database,
 )
 from bill_analyzer.importers import IMPORTERS, UnsupportedBillError
+from bill_analyzer import access
+from bill_analyzer.postgres import is_postgres, write_lock
 
 
 PROJECT_DIR = Path(__file__).resolve().parent
 STATIC_DIR = PROJECT_DIR / "static"
 DEFAULT_DB = PROJECT_DIR / "data" / "bills.db"
 MAX_UPLOAD_BYTES = 50 * 1024 * 1024
+MAX_DATABASE_BYTES = 250 * 1024 * 1024
 
 
 def import_bytes(db_path: Path, filename: str, content: bytes) -> dict:
@@ -58,10 +66,41 @@ def import_path(db_path: Path, path: Path) -> dict:
 
 class BillRequestHandler(BaseHTTPRequestHandler):
     server_version = "LocalBillAnalyzer/1.0"
+    cloud = False
 
     @property
     def db_path(self) -> Path:
         return self.server.db_path  # type: ignore[attr-defined]
+
+    @property
+    def database_label(self):
+        return "PostgreSQL（云端账本）" if is_postgres(self.db_path) else str(self.db_path)
+
+    @property
+    def upload_limit(self):
+        return 4 * 1024 * 1024 if self.cloud else MAX_UPLOAD_BYTES
+
+    def check_access(self, require_cloud=False):
+        if require_cloud and (not is_postgres(os.environ.get("DATABASE_URL", "")) or len(os.environ.get("APP_PASSWORD", "")) < 16):
+            self.send_error_json("部署尚未配置：需要 DATABASE_URL 和至少 16 位的 APP_PASSWORD", 503)
+            return False
+        if access.configured() and not access.authorized(self.headers.get("Authorization", "")):
+            body = b'{"error":"Please sign in"}'
+            self.send_response(401)
+            self.send_header("WWW-Authenticate", 'Basic realm="Private Ledger", charset="UTF-8"')
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return False
+        if self.command in {"POST", "DELETE"} and not access.same_origin(self.headers):
+            self.send_error_json("不接受跨站修改请求", 403)
+            return False
+        return True
+
+    def unexpected_error(self, exc):
+        self.send_error_json("服务器处理失败，请检查服务配置" if self.cloud else str(exc), 500)
 
     def log_message(self, fmt: str, *args) -> None:
         sys.stdout.write(f"[{self.log_date_time_string()}] {fmt % args}\n")
@@ -108,10 +147,39 @@ class BillRequestHandler(BaseHTTPRequestHandler):
         self.wfile.write(content)
 
     def do_GET(self) -> None:
+        if not self.check_access():
+            return
         parsed = urlparse(self.path)
         try:
             if parsed.path == "/api/health":
-                self.send_json({"status": "ok", "database": str(self.db_path)})
+                self.send_json({"status": "ok", "database": self.database_label})
+            elif parsed.path == "/api/database/export":
+                filename = f"bills-{datetime.now():%Y%m%d-%H%M%S}.db"
+                with tempfile.TemporaryDirectory(prefix="bill-analyzer-export-") as temp_dir:
+                    snapshot = Path(temp_dir) / filename
+                    backup_id = self.query_params().get("backup")
+                    if backup_id and is_postgres(self.db_path):
+                        with connect(self.db_path) as connection:
+                            row = connection.execute("SELECT filename, content FROM database_backups WHERE id = ?", (int(backup_id),)).fetchone()
+                        if not row:
+                            self.send_error_json("备份不存在", 404)
+                            return
+                        filename = row["filename"]
+                        snapshot.write_bytes(bytes(row["content"]))
+                    else:
+                        backup_database(self.db_path, snapshot)
+                    if self.cloud and snapshot.stat().st_size > self.upload_limit:
+                        self.send_error_json("云端网页导出上限为 4 MB，请使用命令行迁移工具导出完整账本", 413)
+                        return
+                    self.send_response(HTTPStatus.OK)
+                    self.send_header("Content-Type", "application/vnd.sqlite3")
+                    self.send_header("Content-Disposition", f'attachment; filename="{filename}"')
+                    self.send_header("Content-Length", str(snapshot.stat().st_size))
+                    self.send_header("Cache-Control", "no-store")
+                    self.end_headers()
+                    with snapshot.open("rb") as stream:
+                        while chunk := stream.read(1024 * 1024):
+                            self.wfile.write(chunk)
             elif parsed.path == "/api/dashboard":
                 self.send_json(dashboard(self.db_path, self.query_params()))
             elif parsed.path == "/api/transactions":
@@ -128,7 +196,9 @@ class BillRequestHandler(BaseHTTPRequestHandler):
                 self.send_json(
                     {
                         "version": "1.0.0",
-                        "database": str(self.db_path),
+                        "database": self.database_label,
+                        "storage": "postgres" if is_postgres(self.db_path) else "sqlite",
+                        "max_upload_bytes": self.upload_limit,
                         "transaction_count": count,
                         "categories": categories,
                         "supported_formats": ["支付宝 CSV（GB18030/UTF-8）", "微信 XLSX", "校内收入 XLS（学生收入查询）"],
@@ -139,9 +209,11 @@ class BillRequestHandler(BaseHTTPRequestHandler):
             else:
                 self.serve_static(parsed.path)
         except Exception as exc:
-            self.send_error_json(str(exc), HTTPStatus.INTERNAL_SERVER_ERROR)
+            self.unexpected_error(exc)
 
     def do_POST(self) -> None:
+        if not self.check_access():
+            return
         parsed = urlparse(self.path)
         try:
             if parsed.path == "/api/import":
@@ -151,16 +223,28 @@ class BillRequestHandler(BaseHTTPRequestHandler):
                 length = int(self.headers.get("Content-Length", "0"))
                 if length <= 0:
                     raise ValueError("上传文件为空")
-                if length > MAX_UPLOAD_BYTES:
-                    raise ValueError("单个文件不能超过 50 MB")
+                if length > self.upload_limit:
+                    self.send_error_json(f"单个文件不能超过 {self.upload_limit // 1024 // 1024} MB", 413)
+                    return
                 result = import_bytes(self.db_path, filename, self.rfile.read(length))
                 self.send_json(result, HTTPStatus.CREATED)
+            elif parsed.path == "/api/database/import":
+                length = int(self.headers.get("Content-Length", "0"))
+                if length <= 0:
+                    raise ValueError("数据库文件为空")
+                limit = self.upload_limit if self.cloud else MAX_DATABASE_BYTES
+                if length > limit:
+                    self.send_error_json(f"数据库文件不能超过 {limit // 1024 // 1024} MB；较大账本请使用命令行迁移工具", HTTPStatus.REQUEST_ENTITY_TOO_LARGE)
+                    return
+                result = restore_database(self.db_path, self.rfile.read(length))
+                self.send_json(result, HTTPStatus.OK)
             elif parsed.path == "/api/rules":
                 self.send_json(add_rule(self.db_path, self.read_json()), HTTPStatus.CREATED)
             elif parsed.path == "/api/reclassify":
                 from bill_analyzer.db import reclassify_all
 
                 with connect(self.db_path) as connection:
+                    write_lock(connection)
                     changed = reclassify_all(connection)
                     connection.commit()
                 self.send_json({"reclassified": changed})
@@ -169,9 +253,11 @@ class BillRequestHandler(BaseHTTPRequestHandler):
         except (ValueError, UnsupportedBillError, json.JSONDecodeError) as exc:
             self.send_error_json(str(exc))
         except Exception as exc:
-            self.send_error_json(str(exc), HTTPStatus.INTERNAL_SERVER_ERROR)
+            self.unexpected_error(exc)
 
     def do_DELETE(self) -> None:
+        if not self.check_access():
+            return
         parsed = urlparse(self.path)
         try:
             if parsed.path.startswith("/api/rules/"):
@@ -183,7 +269,7 @@ class BillRequestHandler(BaseHTTPRequestHandler):
         except (ValueError, KeyError) as exc:
             self.send_error_json(str(exc), HTTPStatus.NOT_FOUND if isinstance(exc, KeyError) else HTTPStatus.BAD_REQUEST)
         except Exception as exc:
-            self.send_error_json(str(exc), HTTPStatus.INTERNAL_SERVER_ERROR)
+            self.unexpected_error(exc)
 
 
 class BillServer(ThreadingHTTPServer):
@@ -197,7 +283,7 @@ def serve(db_path: Path, host: str, port: int, open_browser: bool) -> None:
     server = BillServer((host, port), db_path)
     url = f"http://{host}:{port}"
     print(f"账单分析服务已启动：{url}")
-    print(f"本地数据库：{db_path}")
+    print(f"数据库：{'PostgreSQL（云端账本）' if is_postgres(db_path) else db_path}")
     print("按 Ctrl+C 停止服务。")
     if open_browser:
         threading.Timer(0.8, lambda: webbrowser.open(url)).start()
@@ -210,8 +296,10 @@ def serve(db_path: Path, host: str, port: int, open_browser: bool) -> None:
 
 
 def main() -> None:
+    from dotenv import load_dotenv
+    load_dotenv(PROJECT_DIR / ".env")
     parser = argparse.ArgumentParser(description="本地微信/支付宝账单分析")
-    parser.add_argument("--db", type=Path, default=DEFAULT_DB, help="SQLite 数据库路径")
+    parser.add_argument("--db", default=os.environ.get("DATABASE_URL") or DEFAULT_DB, help="SQLite 路径或 PostgreSQL URL")
     subparsers = parser.add_subparsers(dest="command")
     serve_parser = subparsers.add_parser("serve", help="启动本地网页和 API")
     serve_parser.add_argument("--host", default="127.0.0.1")

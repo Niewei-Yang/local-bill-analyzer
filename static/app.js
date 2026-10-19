@@ -1,5 +1,7 @@
 const state = {
   dashboard: null,
+  dashboardRequest: 0,
+  filterContext: null,
   detailRequest: 0,
   recentRequest: 0,
   growthDayRequest: 0,
@@ -107,16 +109,21 @@ function periodBudget(period, granularity, monthlyBudget = state.monthlyBudget) 
   return Math.round(budget * 100) / 100;
 }
 
-function cumulativeDailyPoints(trend, bounds, monthlyBudget = state.monthlyBudget) {
+function cumulativeDailyPoints(trend, bounds, monthlyBudget = state.monthlyBudget, schoolIncome = []) {
   const amounts = new Map(trend.map(item => [item.period, Math.round(item.total * 100)]));
+  const incomeAmounts = new Map(schoolIncome.map(item => [item.day, Math.round(item.amount * 100)]));
   const points = [];
   let cents = 0;
+  let incomeCents = 0;
   let planned = 0;
   for (let day = bounds.start; day <= bounds.end; day = addDays(day, 1)) {
     const daily = amounts.get(day) || 0;
     cents += daily;
+    const dailyIncome = incomeAmounts.get(day) || 0;
+    incomeCents += dailyIncome;
     planned += dailyBudget(day, monthlyBudget);
-    points.push({ day, daily: daily / 100, total: cents / 100, planned: Math.round(planned * 100) / 100 });
+    points.push({ day, daily: daily / 100, total: cents / 100, planned: Math.round(planned * 100) / 100,
+      dailySchoolIncome: dailyIncome / 100, schoolIncome: incomeCents / 100 });
   }
   return points;
 }
@@ -130,7 +137,7 @@ function clearGrowthDay() {
   });
 }
 
-async function openGrowthDay(point, dot, platform) {
+async function openGrowthDay(point, dot, context) {
   clearGrowthDay();
   const request = state.growthDayRequest;
   dot.classList.add("selected");
@@ -144,7 +151,7 @@ async function openGrowthDay(point, dot, platform) {
     let page = 1;
     let total = 0;
     do {
-      const params = contextParams({ start: point.day, end: point.day, platform }, { page, size: 200 });
+      const params = contextParams({ ...context, start: point.day, end: point.day }, { page, size: 200 });
       const result = await api(`/api/transactions?${params}`);
       if (request !== state.growthDayRequest) return;
       items.push(...result.items);
@@ -152,20 +159,20 @@ async function openGrowthDay(point, dot, platform) {
       page += 1;
       if (!result.items.length) break;
     } while (items.length < total);
-    const isTransferIncome = item => item.platform === "微信" && item.direction === "income" && !item.is_refund && item.category_raw === "转账";
-    const rows = items.filter(item => item.direction === "expense" || item.is_refund || isTransferIncome(item));
+    const isWechatIncome = item => item.platform === "微信" && item.direction === "income" && !item.is_refund && ["转账", "二维码收款"].includes(item.category_raw);
+    const rows = items.filter(item => item.direction === "expense" || item.is_refund || isWechatIncome(item));
     const expenses = rows.filter(item => item.direction === "expense");
     const refunds = rows.filter(item => item.is_refund);
-    const transfers = rows.filter(isTransferIncome);
+    const receipts = rows.filter(isWechatIncome);
     const amount = list => list.reduce((sum, item) => sum + item.amount_cents, 0) / 100;
     setText("#growthDaySummary", rows.length
-      ? `${expenses.length} 笔支出 ${money.format(amount(expenses))} · ${refunds.length} 笔退款 ${money.format(amount(refunds))} · ${transfers.length} 笔微信转账收入 ${money.format(amount(transfers))} · 当日净支出 ${money.format(amount(expenses) - amount(refunds) - amount(transfers))}`
-      : "当天没有支出、退款或微信转账收入，累计净支出保持不变。");
+      ? `${expenses.length} 笔支出 ${money.format(amount(expenses))} · ${refunds.length} 笔退款 ${money.format(amount(refunds))} · ${receipts.length} 笔微信收款 ${money.format(amount(receipts))} · 当日净支出 ${money.format(amount(expenses) - amount(refunds) - amount(receipts))}`
+      : "当天没有支出、退款或微信收款，累计净支出保持不变。");
     fillTable("#growthDayTable", rows, [
       { value: item => item.transaction_time.slice(11) }, { value: "platform" },
-      { value: item => item.is_refund ? "退款" : isTransferIncome(item) ? "微信转账收入" : "支出" },
+      { value: item => item.is_refund ? "退款" : isWechatIncome(item) ? (item.category_raw === "二维码收款" ? "微信二维码收款" : "微信转账收入") : "支出" },
       { value: "counterparty" }, { value: "description" }, { value: "category" },
-      { value: item => `${item.is_refund || isTransferIncome(item) ? "−" : ""}${money.format(item.amount)}`, className: "number" },
+      { value: item => `${item.is_refund || isWechatIncome(item) ? "−" : ""}${money.format(item.amount)}`, className: "number" },
     ]);
   } catch (error) {
     if (request === state.growthDayRequest) setText("#growthDaySummary", `读取失败：${error.message}。请再次点击圆点重试。`);
@@ -182,17 +189,38 @@ function renderDailyGrowth(detail, period, dashboard, bounds, preserveDay = fals
   svg.replaceChildren();
   if (panel.hidden) return;
   const budget = periodBudget(period.period, dashboard.granularity);
-  const points = cumulativeDailyPoints(detail.trend, bounds);
   const monthly = dashboard.granularity === "month";
-  const latest = points.at(-1)?.total || 0;
-  setText("#dailyGrowthMeta", `${monthly ? "月" : "周"}额度 ${money.format(budget)} · 累计 ${money.format(latest)} · ${latest > budget ? "超出" : "剩余"} ${money.format(Math.abs(budget - latest))}${monthly ? "" : `（${money.format(state.monthlyBudget)} ÷ 当月天数，按周一至周日逐日相加）`}`);
-  const describe = point => `${point.day} · 当日净支出 ${money.format(point.daily)} · 累计净支出 ${money.format(point.total)} · 计划累计 ${money.format(point.planned)} · ${point.total > point.planned ? "超计划" : "低于计划"} ${money.format(Math.abs(point.total - point.planned))}`;
-  setText("#dailyGrowthPoint", points.length ? describe(points.find(point => point.day === selectedDay) || points.at(-1)) : "暂无数据");
+  const displayBounds = { ...bounds };
+  if (monthly && period.period === dashboard.trend?.at(-1)?.period) {
+    const [year, month] = period.period.split("-").map(Number);
+    displayBounds.end = new Date(Date.UTC(year, month, 0)).toISOString().slice(0, 10);
+  }
+  const points = cumulativeDailyPoints(detail.trend, displayBounds, state.monthlyBudget, detail.school_income_daily);
+  const actualPoints = points.filter(point => point.day <= bounds.end);
+  const latest = actualPoints.at(-1)?.total || 0;
+  setText("#dailyGrowthMeta", `${monthly ? "月" : "周"}额度 ${money.format(budget)} · 累计净支出 ${money.format(latest)} · ${latest > budget ? "超出" : "剩余"} ${money.format(Math.abs(budget - latest))} · 校内税后收入累计 ${money.format(actualPoints.at(-1)?.schoolIncome || 0)}${monthly ? "" : `（${money.format(state.monthlyBudget)} ÷ 当月天数，按周一至周日逐日相加）`}`);
+  const describe = point => `${point.day} · 当日净支出 ${money.format(point.daily)} · 累计净支出 ${money.format(point.total)} · 计划累计 ${money.format(point.planned)} · ${point.total > point.planned ? "超计划" : "低于计划"} ${money.format(Math.abs(point.total - point.planned))} · 当日校内税后收入 ${money.format(point.dailySchoolIncome)} · 累计校内税后收入 ${money.format(point.schoolIncome)}`;
+  const showPoint = (point, income = false) => {
+    const readout = $("#dailyGrowthPoint");
+    readout.replaceChildren(make("span", point.day, "growth-readout-date"));
+    const metrics = income
+      ? [["当日税后收入", point.dailySchoolIncome], ["累计校内税后收入", point.schoolIncome]]
+      : [["当日净支出", point.daily], ["累计净支出", point.total],
+        [point.total > point.planned ? "超计划" : "低于计划", Math.abs(point.total - point.planned)]];
+    metrics.forEach(([label, value]) => {
+      const item = make("span", undefined, "growth-readout-item");
+      item.append(make("span", label), make("strong", money.format(value)));
+      readout.append(item);
+    });
+  };
+  const retainedPoint = actualPoints.find(point => point.day === selectedDay);
+  if (retainedPoint) showPoint(retainedPoint);
+  else setText("#dailyGrowthPoint", actualPoints.length ? "悬停圆点查看金额 · 点击蓝点查看明细" : "暂无数据");
   const width = 900, height = 300;
   const margin = { left: 65, right: 24, top: 36, bottom: 38 };
   svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
-  const minimum = Math.min(0, ...points.map(point => point.total));
-  const maximum = Math.max(budget, ...points.flatMap(point => [point.total, point.planned]));
+  const minimum = Math.min(0, ...actualPoints.map(point => point.total));
+  const maximum = Math.max(budget, ...points.map(point => point.planned), ...actualPoints.flatMap(point => [point.total, point.schoolIncome]));
   const axis = adaptiveAxis(maximum - minimum);
   const low = Math.floor(minimum / axis.step) * axis.step;
   const high = Math.max(low + axis.step, Math.ceil(maximum / axis.step) * axis.step);
@@ -205,8 +233,9 @@ function renderDailyGrowth(detail, period, dashboard, bounds, preserveDay = fals
   svg.append(svgNode("line", { x1: margin.left, x2: width - margin.right, y1: y(budget), y2: y(budget), class: "growth-budget" }));
   svg.append(svgNode("text", { x: width - margin.right, y: y(budget) - 9, "text-anchor": "end", class: "growth-budget-label" }, `${monthly ? "月" : "周"}额度 ${money.format(budget)}`));
   svg.append(svgNode("path", { d: points.map((point, index) => `${index ? "L" : "M"}${x(index)},${y(point.planned)}`).join(" "), class: "growth-plan" }));
-  svg.append(svgNode("path", { d: points.map((point, index) => `${index ? "L" : "M"}${x(index)},${y(point.total)}`).join(" "), class: "growth-line" }));
-  points.forEach((point, index) => {
+  svg.append(svgNode("path", { d: actualPoints.map((point, index) => `${index ? "L" : "M"}${x(index)},${y(point.total)}`).join(" "), class: "growth-line" }));
+  svg.append(svgNode("path", { d: actualPoints.map((point, index) => `${index ? "L" : "M"}${x(index)},${y(point.schoolIncome)}`).join(" "), class: "growth-school-income" }));
+  actualPoints.forEach((point, index) => {
     const dot = svgNode("circle", { cx: x(index), cy: y(point.total), r: 4, class: "growth-point", tabindex: "0", role: "button", "aria-pressed": "false", "aria-label": `${describe(point)}，点击查看消费明细` });
     dot.dataset.day = point.day;
     if (point.day === selectedDay) {
@@ -214,19 +243,32 @@ function renderDailyGrowth(detail, period, dashboard, bounds, preserveDay = fals
       dot.setAttribute("aria-pressed", "true");
     }
     dot.append(svgNode("title", {}, describe(point)));
-    ["mouseenter", "focus", "click"].forEach(event => dot.addEventListener(event, () => setText("#dailyGrowthPoint", describe(point))));
-    const platform = $("#platformFilter").value;
-    dot.addEventListener("click", () => openGrowthDay(point, dot, platform));
+    ["mouseenter", "focus", "click"].forEach(event => dot.addEventListener(event, () => showPoint(point)));
+    const context = state.filterContext;
+    dot.addEventListener("click", () => openGrowthDay(point, dot, context));
     dot.addEventListener("keydown", event => {
       if (event.key === "Enter" || event.key === " ") {
         event.preventDefault();
-        openGrowthDay(point, dot, platform);
+        openGrowthDay(point, dot, context);
       }
     });
     svg.append(dot);
+  });
+  points.forEach((point, index) => {
     if (index % Math.max(1, Math.ceil(points.length / 8)) === 0 || index === points.length - 1) {
       svg.append(svgNode("text", { x: x(index), y: height - 13, "text-anchor": "middle", class: "chart-muted" }, point.day.slice(5)));
     }
+  });
+  actualPoints.forEach((point, index) => {
+    if (point.dailySchoolIncome <= 0) return;
+    const description = `${point.day} · 当日校内税后收入 ${money.format(point.dailySchoolIncome)} · 累计校内税后收入 ${money.format(point.schoolIncome)}`;
+    const dot = svgNode("circle", { cx: x(index), cy: y(point.schoolIncome), r: 3.5,
+      class: "growth-school-income-point", tabindex: "0", "aria-label": description,
+      "pointer-events": Math.abs(y(point.schoolIncome) - y(point.total)) < 12 ? "none" : "auto",
+      "data-day": point.day, "data-daily": point.dailySchoolIncome, "data-total": point.schoolIncome });
+    dot.append(svgNode("title", {}, description));
+    ["mouseenter", "focus", "click"].forEach(event => dot.addEventListener(event, () => showPoint(point, true)));
+    svg.append(dot);
   });
 }
 
@@ -235,6 +277,7 @@ function currentFilterContext() {
     start: $("#startDate").value,
     end: $("#endDate").value,
     platform: $("#platformFilter").value,
+    excludeLargeExpenses: $("#excludeLargeExpenses").checked,
   };
 }
 
@@ -243,6 +286,7 @@ function contextParams(context, extra = {}) {
   if (context?.start) params.set("start", context.start);
   if (context?.end) params.set("end", context.end);
   if (context?.platform) params.set("platform", context.platform);
+  if (context?.excludeLargeExpenses) params.set("exclude_large_expenses", "true");
   Object.entries(extra).forEach(([key, value]) => params.set(key, String(value)));
   return params;
 }
@@ -260,7 +304,7 @@ function closeTrendDetail() {
   clearSelectedPeriod();
   if (!state.dashboard) return;
   renderAnalysisSections(state.dashboard, null, null);
-  state.recentContext = currentFilterContext();
+  state.recentContext = state.filterContext;
   renderRecentPage(state.dashboard.recent, state.dashboard.summary.row_count, 1, 30);
 }
 
@@ -275,7 +319,7 @@ function renderTrendDetail(detail, period, periodIndex, dashboard) {
   setText("#detailNetSpend", money.format(detail.summary.net_spend));
   setText("#detailExpenseCount", `${integer.format(detail.summary.expense_count)} 笔`);
   setText("#detailRefunds", money.format(detail.summary.refunds));
-  setText("#detailTransferIncome", money.format(detail.summary.transfer_income));
+  setText("#detailTransferIncome", money.format(detail.summary.wechat_income));
   renderDailyGrowth(detail, period, dashboard, bounds);
   setText("#detailComparisonLabel", `较上一显示${unit}`);
   if (!previous) {
@@ -305,9 +349,8 @@ async function openTrendDetail(period, periodIndex, dashboard, group) {
   setText("#trendDetailTitle", "正在读取…");
   setText("#trendDetailMeta", "正在汇总该时段的消费构成");
   const bounds = selectedPeriodBounds(period.period, dashboard.granularity, dashboard);
-  const platform = $("#platformFilter").value;
   const selectionLabel = selectedPeriodTitle(period.period, dashboard.granularity);
-  const context = { ...bounds, platform, label: selectionLabel };
+  const context = { ...state.filterContext, ...bounds, label: selectionLabel };
   const params = contextParams(context, { granularity: "day" });
   const recentParams = contextParams(context, { page: 1, size: 30 });
   const topParams = contextParams(context, { page: 1, size: 1, direction: "expense", sort: "amount_desc" });
@@ -332,16 +375,8 @@ async function openTrendDetail(period, periodIndex, dashboard, group) {
   }
 }
 
-function queryString() {
-  const params = new URLSearchParams();
-  const start = $("#startDate").value;
-  const end = $("#endDate").value;
-  const platform = $("#platformFilter").value;
-  const granularity = $("#granularity").value;
-  if (start) params.set("start", start);
-  if (end) params.set("end", end);
-  if (platform) params.set("platform", platform);
-  params.set("granularity", granularity || "month");
+function queryString(context = currentFilterContext()) {
+  const params = contextParams(context, { granularity: $("#granularity").value || "month" });
   const value = params.toString();
   return value ? `?${value}` : "";
 }
@@ -358,7 +393,8 @@ function renderSummary(data) {
   setText("#dailyAverage", money.format(summary.daily_average));
   setText("#expenseMeta", `${integer.format(summary.expense_count)} 笔支出，${integer.format(summary.refund_count)} 笔退款`);
   setText("#medianMeta", `单笔中位数 ${money.format(summary.median_expense)}`);
-  setText("#periodText", data.period.start ? `${data.period.start} 至 ${data.period.end}（${data.period.days} 天）` : "数据库暂无交易");
+  const scope = data.period.start ? `${data.period.start} 至 ${data.period.end}（${data.period.days} 天）` : "当前筛选下暂无交易";
+  setText("#periodText", scope + (state.filterContext?.excludeLargeExpenses ? " · 已排除单笔 ≥ 1000 元支出" : ""));
 }
 
 function renderPlatforms(items) {
@@ -381,19 +417,39 @@ function renderPlatforms(items) {
   });
 }
 
+function monthlySchoolIncomePeriods(periods, dailyIncome = []) {
+  const months = new Map(periods.map(period => [period.period || period.month, { ...period, school_income: 0 }]));
+  const amounts = new Map();
+  dailyIncome.forEach(row => {
+    const cents = Math.round(row.amount * 100);
+    if (cents <= 0) return;
+    const month = row.day.slice(0, 7);
+    amounts.set(month, (amounts.get(month) || 0) + cents);
+    if (!months.has(month)) months.set(month, { period: month, total: 0, categories: {}, school_income: 0 });
+  });
+  return [...months.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([month, period]) => ({
+    ...period, school_income: (amounts.get(month) || 0) / 100,
+  }));
+}
+
 function renderTrend(data) {
   const svg = $("#monthlyChart");
   svg.replaceChildren();
   const granularity = data.granularity || "month";
-  const periods = data.trend || data.monthly || [];
-  const categories = data.trend_categories || data.monthly_categories || [];
+  const sourcePeriods = data.trend || data.monthly || [];
+  const periods = granularity === "month" ? monthlySchoolIncomePeriods(sourcePeriods, data.school_income_daily) : sourcePeriods;
+  const chartData = { ...data, trend: periods };
+  const hasSchoolIncome = periods.some(period => period.school_income > 0);
+  const categories = [...new Set(data.trend_categories || data.monthly_categories || [])];
   const labels = {
-    month: { title: "月度支出与构成", hint: "点击月份查看详细构成，末月可能是不完整月份", aria: "月度分类支出堆叠柱状图" },
+    month: { title: "月度支出与校内收入", hint: "点击月份查看详情，末月可能不完整", aria: "月度分类支出与校内税后收入堆叠柱状图" },
     week: { title: "每周支出与构成", hint: "点击周次查看详细构成，每周从周一开始", aria: "每周分类支出堆叠柱状图" },
     day: { title: "每日支出与构成", hint: "点击日期查看详细构成，可横向滚动", aria: "每日分类支出堆叠柱状图" }
   }[granularity];
   setText("#trendTitle", labels.title);
-  setText("#trendHint", labels.hint);
+  setText("#trendHint", hasSchoolIncome
+    ? `${labels.hint}；紫色负柱为校内税后收入，柱顶为净支出（未减校内收入）`
+    : `${labels.hint}；柱顶数字为净支出，零线下方为类别净抵扣`);
   svg.setAttribute("aria-label", labels.aria);
   const width = granularity === "day" ? Math.max(920, periods.length * 32 + 90)
     : granularity === "week" ? Math.max(920, periods.length * 62 + 90) : 920;
@@ -404,17 +460,34 @@ function renderTrend(data) {
   svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
   svg.style.minWidth = `${width}px`;
   svg.append(svgNode("title", {}, labels.aria));
+  const legend = $("#monthlyLegend");
+  legend.replaceChildren();
+  [...categories, ...(hasSchoolIncome ? ["校内税后收入（负值）"] : [])].forEach((category, index) => {
+    const item = make("span", undefined, "legend-item");
+    const swatch = make("i", undefined, "swatch");
+    swatch.style.background = index < categories.length ? palette[index % palette.length] : "var(--purple)";
+    item.append(swatch, document.createTextNode(category));
+    legend.append(item);
+  });
   if (!periods.length) {
     svg.append(svgNode("text", { x: width / 2, y: height / 2, "text-anchor": "middle", class: "chart-label" }, "暂无数据"));
     return;
   }
-  const axis = adaptiveAxis(Math.max(...periods.map(item => Math.max(0, item.total)), 1));
-  const y = value => margin.top + innerHeight - (value / axis.max) * innerHeight;
+  const stacks = periods.map(period => categories.reduce((totals, category) => {
+    const amount = period.categories[category] || 0;
+    totals[amount >= 0 ? "positive" : "negative"] += amount;
+    return totals;
+  }, { positive: 0, negative: -(period.school_income || 0) }));
+  const minimum = Math.min(0, ...stacks.map(item => item.negative));
+  const maximum = Math.max(0, ...stacks.map(item => item.positive));
+  const axis = adaptiveAxis(maximum - minimum);
+  const low = Math.floor(minimum / axis.step) * axis.step;
+  const high = Math.max(low + axis.step, Math.ceil(maximum / axis.step) * axis.step);
+  const y = value => margin.top + innerHeight - (value - low) / (high - low) * innerHeight;
   const band = innerWidth / periods.length;
   const barWidth = Math.max(8, Math.min(112, band * .62));
 
-  for (let tick = 0; tick <= axis.ticks; tick += 1) {
-    const value = axis.step * tick;
+  for (let value = low; value <= high; value += axis.step) {
     const yy = y(value);
     svg.append(svgNode("line", { x1: margin.left, y1: yy, x2: width - margin.right, y2: yy, class: "chart-grid" }));
     svg.append(svgNode("text", { x: margin.left - 9, y: yy + 4, "text-anchor": "end", class: "chart-muted" }, compactAmount(value)));
@@ -434,49 +507,56 @@ function renderTrend(data) {
     const x = margin.left + band * periodIndex + (band - barWidth) / 2;
     const group = svgNode("g", {
       class: "trend-period", tabindex: "0", role: "button",
-      "aria-label": `${periodLabel(periodKey)}，净支出 ${money.format(period.total)}，点击查看详细构成`
+      "data-period": periodKey,
+      "aria-label": `${periodLabel(periodKey)}，净支出 ${money.format(period.total)}${period.school_income ? `，校内税后收入 ${money.format(period.school_income)}` : ""}，点击查看详细构成`
     });
     group.append(svgNode("rect", {
       x: bandX, y: margin.top, width: band, height: innerHeight + 36, class: "trend-hit"
     }));
-    let cumulative = 0;
+    let positive = 0;
+    let negative = 0;
     categories.forEach((category, categoryIndex) => {
       const amount = period.categories[category] || 0;
-      if (amount <= 0) return;
+      if (amount === 0) return;
+      const cumulative = amount > 0 ? positive : negative;
       const top = cumulative + amount;
       const rect = svgNode("rect", {
-        x, y: y(top), width: barWidth, height: Math.max(0, y(cumulative) - y(top)),
-        fill: palette[categoryIndex % palette.length]
+        x, y: y(Math.max(cumulative, top)), width: barWidth, height: Math.abs(y(cumulative) - y(top)),
+        fill: palette[categoryIndex % palette.length],
+        "data-category": category, "data-amount": amount
       });
       rect.append(svgNode("title", {}, `${periodKey} · ${category}：${money.format(amount)}`));
       group.append(rect);
-      cumulative = top;
+      if (amount > 0) positive = top;
+      else negative = top;
     });
+    if (period.school_income > 0) {
+      const top = negative - period.school_income;
+      const rect = svgNode("rect", {
+        x, y: y(negative), width: barWidth, height: y(top) - y(negative), fill: "var(--purple)",
+        "data-series": "school-income", "data-amount": -period.school_income,
+      });
+      rect.append(svgNode("title", {}, `${periodKey} · 校内税后收入：${money.format(period.school_income)}（图中记为负值）`));
+      group.append(rect);
+    }
     if (granularity !== "day" || periods.length <= 35 || periodIndex % labelEvery === 0 || periodIndex === periods.length - 1) {
-      group.append(svgNode("text", { x: x + barWidth / 2, y: y(cumulative) - 7, "text-anchor": "middle", class: "chart-label" }, cumulative >= 1000 ? `${(cumulative / 1000).toFixed(2)}k` : cumulative.toFixed(0)));
+      const label = svgNode("text", { x: x + barWidth / 2, y: y(positive) - 7, "text-anchor": "middle", class: "chart-label trend-net-label", "data-total": period.total }, Math.abs(period.total) >= 1000 ? `${(period.total / 1000).toFixed(2)}k` : period.total.toFixed(0));
+      label.append(svgNode("title", {}, `净支出 ${money.format(period.total)}${hasSchoolIncome ? "（未减校内收入）" : ""}`));
+      group.append(label);
     }
     if (periodIndex % labelEvery === 0 || periodIndex === periods.length - 1) {
       group.append(svgNode("text", { x: x + barWidth / 2, y: height - 20, "text-anchor": "middle", class: "chart-label trend-x-label" }, periodLabel(periodKey)));
     }
-    group.addEventListener("click", () => openTrendDetail(detailPeriod, periodIndex, data, group));
+    group.addEventListener("click", () => openTrendDetail(detailPeriod, periodIndex, chartData, group));
     group.addEventListener("keydown", event => {
       if (event.key === "Enter" || event.key === " ") {
         event.preventDefault();
-        openTrendDetail(detailPeriod, periodIndex, data, group);
+        openTrendDetail(detailPeriod, periodIndex, chartData, group);
       }
     });
     svg.append(group);
   });
-  svg.append(svgNode("line", { x1: margin.left, y1: margin.top + innerHeight, x2: width - margin.right, y2: margin.top + innerHeight, class: "chart-axis" }));
-  const legend = $("#monthlyLegend");
-  legend.replaceChildren();
-  categories.forEach((category, index) => {
-    const item = make("span", undefined, "legend-item");
-    const swatch = make("i", undefined, "swatch");
-    swatch.style.background = palette[index % palette.length];
-    item.append(swatch, document.createTextNode(category));
-    legend.append(item);
-  });
+  svg.append(svgNode("line", { x1: margin.left, y1: y(0), x2: width - margin.right, y2: y(0), class: "chart-axis" }));
 }
 
 function renderCategories(items) {
@@ -613,14 +693,15 @@ function renderAnalysisSections(data, selection, topExpense) {
   renderTopSpend(data, selection, topExpense);
 }
 
-function renderDashboard(data) {
+function renderDashboard(data, context) {
   clearGrowthDay();
   state.detailRequest += 1;
   state.recentRequest += 1;
   $("#trendDetail").hidden = true;
   clearSelectedPeriod();
   state.dashboard = data;
-  state.recentContext = currentFilterContext();
+  state.filterContext = context;
+  state.recentContext = context;
   renderSummary(data);
   renderPlatforms(data.platforms);
   renderTrend(data);
@@ -630,16 +711,24 @@ function renderDashboard(data) {
 
 async function loadDashboard() {
   clearNotice();
+  const request = ++state.dashboardRequest;
+  const context = currentFilterContext();
+  clearGrowthDay();
+  state.detailRequest += 1;
+  state.recentRequest += 1;
   try {
-    renderDashboard(await api(`/api/dashboard${queryString()}`));
+    const data = await api(`/api/dashboard${queryString(context)}`);
+    if (request !== state.dashboardRequest) return;
+    renderDashboard(data, context);
   } catch (error) {
-    notice(error.message, true);
+    if (request === state.dashboardRequest) notice(error.message, true);
   }
 }
 
 async function loadMeta() {
   const meta = await api("/api/meta");
   setText("#dbPath", `数据库：${meta.database}`);
+  setText("#storageNotice", meta.storage === "postgres" ? "账本保存在云数据库，跨设备共享。" : "数据保存在本机 SQLite，不上传云端。");
 }
 
 async function loadRules() {
@@ -701,7 +790,68 @@ async function uploadFiles(files) {
   }
 }
 
+async function exportDatabase() {
+  const button = $("#exportDatabaseButton");
+  button.disabled = true;
+  try {
+    const response = await fetch("/api/database/export");
+    if (!response.ok) {
+      const error = await response.json();
+      throw new Error(error.error || `导出失败：${response.status}`);
+    }
+    const blob = await response.blob();
+    const disposition = response.headers.get("Content-Disposition") || "";
+    const filename = disposition.match(/filename="([^"]+)"/)?.[1] || "bills.db";
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = filename;
+    link.click();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    notice(`数据库已导出为 ${filename}。`);
+  } catch (error) {
+    notice(error.message, true);
+  } finally {
+    button.disabled = false;
+  }
+}
+
+async function importDatabase(file) {
+  if (!file) return;
+  const confirmed = window.confirm(
+    `确定从“${file.name}”恢复数据库吗？这会替换当前账本。导入前会自动备份当前数据库；文件必须是完整且兼容的本地账单分析 SQLite 数据库。`
+  );
+  if (!confirmed) return;
+  const button = $("#importDatabaseButton");
+  button.disabled = true;
+  try {
+    notice(`正在校验并恢复 ${file.name}…`);
+    const response = await fetch("/api/database/import", {
+      method: "POST",
+      headers: { "Content-Type": "application/octet-stream", "X-Filename": encodeURIComponent(file.name) },
+      body: file
+    });
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.error || `导入失败：${response.status}`);
+    const backup = result.backup ? `现有数据库已备份为 ${result.backup}` : "原数据库为空，无需备份";
+    notice(`数据库已恢复：${integer.format(result.transactions)} 笔交易、${integer.format(result.rules)} 条分类规则、${integer.format(result.imports)} 条导入记录。${backup}。`);
+    await Promise.all([loadDashboard(), loadMeta(), loadRules(), loadImports()]);
+  } catch (error) {
+    notice(error.message, true);
+  } finally {
+    button.disabled = false;
+    $("#databaseFileInput").value = "";
+  }
+}
+
 $("#uploadButton").addEventListener("click", () => $("#fileInput").click());
+$("#exportDatabaseButton").addEventListener("click", exportDatabase);
+$("#importDatabaseButton").addEventListener("click", () => $("#databaseFileInput").click());
+$("#databaseFileInput").addEventListener("change", event => {
+  const file = event.target.files[0];
+  event.target.value = "";
+  importDatabase(file);
+});
 try {
   const saved = localStorage.getItem("billAnalyzer.monthlyBudget");
   const value = Number(saved);
@@ -734,11 +884,13 @@ $("#recentNext").addEventListener("click", () => loadRecentPage(state.recentPage
 $("#fileInput").addEventListener("change", event => uploadFiles([...event.target.files]));
 $("#applyFilters").addEventListener("click", loadDashboard);
 $("#granularity").addEventListener("change", loadDashboard);
+$("#excludeLargeExpenses").addEventListener("change", loadDashboard);
 $("#clearFilters").addEventListener("click", () => {
   $("#startDate").value = "";
   $("#endDate").value = "";
   $("#platformFilter").value = "";
   $("#granularity").value = "month";
+  $("#excludeLargeExpenses").checked = false;
   loadDashboard();
 });
 

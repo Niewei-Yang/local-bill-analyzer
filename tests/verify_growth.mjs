@@ -26,8 +26,8 @@ try {
         const meta = await page.locator('#dailyGrowthMeta').textContent();
         if (granularity === 'month') assert.ok(meta.includes('4,500.00'));
         await dots.first().focus();
-        assert.ok((await page.locator('#dailyGrowthPoint').textContent()).includes('计划累计'));
-        assert.ok((await dots.first().getAttribute('aria-label')).startsWith(await page.locator('#dailyGrowthPoint').textContent()));
+        assert.ok((await page.locator('#dailyGrowthPoint').textContent()).includes('累计净支出'));
+        assert.ok((await dots.first().getAttribute('aria-label')).includes('计划累计'));
         await dots.first().click();
         await page.waitForFunction(() => !document.querySelector('#growthDaySummary').textContent.includes('正在读取'));
         assert.equal(await page.locator('#growthDayDetail').isVisible(), true);
@@ -35,7 +35,7 @@ try {
         const day = (await page.locator('#growthDayTitle').textContent()).slice(0, 10);
         const response = await page.request.get(`http://127.0.0.1:8765/api/transactions?start=${day}&end=${day}&size=200`);
         const daily = await response.json();
-        assert.equal(await page.locator('#growthDayTable tr').count(), daily.items.filter(item => item.direction === 'expense' || item.is_refund).length);
+        assert.equal(await page.locator('#growthDayTable tr').count(), daily.items.filter(item => item.direction === 'expense' || item.is_refund || (item.platform === '微信' && item.direction === 'income' && ['转账', '二维码收款'].includes(item.category_raw))).length);
         assert.ok(!(await page.locator('#growthDaySummary').textContent()).includes('读取失败'));
         const oldRows = await page.locator('#growthDayTable').textContent();
         const oldPlan = await page.locator('.growth-plan').getAttribute('d');

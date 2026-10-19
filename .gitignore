@@ -4,6 +4,12 @@ __pycache__/
 .venv/
 venv/
 .env
+.env.*
+!.env.example
+.vercel/
+node_modules/
+.agents/
+skills-lock.json
 
 # Personal bill data and local database
 data/*
@@ -21,3 +27,7 @@ tests/dashboard-*.png
 Thumbs.db
 .idea/
 .vscode/
+
+.vercel
+.env*
+!.env.example

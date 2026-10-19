@@ -27,8 +27,16 @@ try {
         const meta = await page.locator('#dailyGrowthMeta').textContent();
         if (granularity === 'month') assert.ok(meta.includes('4,500.00'));
         await dots.first().focus();
-        assert.ok((await page.locator('#dailyGrowthPoint').textContent()).includes('累计净支出'));
-        assert.ok((await dots.first().getAttribute('aria-label')).includes('计划累计'));
+        assert.ok((await page.locator('#dailyGrowthPoint').textContent()).includes('当日消费'));
+        const expectedHint = await page.evaluate(() => {
+          const { chartDetail, bounds } = state.growthContext;
+          const point = cumulativeDailyPoints(chartDetail.trend, bounds)[0];
+          const delta = Math.round((point.daily - dailyBudget(point.day)) * 100) / 100;
+          return `当日消费 ${point.daily.toFixed(2)} 元，${delta > 0 ? '超出计划' : delta < 0 ? '小于计划' : '与计划持平'} ${Math.abs(delta).toFixed(2)} 元`;
+        });
+        assert.equal(await page.locator('#dailyGrowthPoint').textContent(), expectedHint);
+        assert.equal(await dots.first().locator('title').textContent(), expectedHint);
+        assert.ok(!(await dots.first().getAttribute('aria-label')).includes('累计'));
         await dots.first().click();
         await page.waitForFunction(() => !document.querySelector('#growthDaySummary').textContent.includes('正在读取'));
         assert.equal(await page.locator('#growthDayDetail').isVisible(), true);

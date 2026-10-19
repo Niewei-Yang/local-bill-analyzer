@@ -54,10 +54,6 @@
           <option value="day">按天</option>
         </select>
       </label>
-      <label class="expense-filter">
-        <span class="check"><input id="excludeLargeExpenses" type="checkbox" aria-describedby="expenseFilterHint">排除单笔 ≥ 1000 元支出</span>
-        <span id="expenseFilterHint" class="micro">含 1000 元；收入、退款仍按原规则统计</span>
-      </label>
       <button id="applyFilters" class="button" type="button">应用筛选</button>
       <button id="clearFilters" class="button ghost" type="button">清除</button>
     </section>
@@ -86,9 +82,9 @@
         <span id="budgetHint" class="muted" aria-live="polite">周额度自动折算，设置保存在当前浏览器。</span>
       </div>
       <nav class="trend-pager" aria-label="趋势图翻页">
-        <button id="trendPrev" class="button ghost" type="button" aria-controls="monthlyChart" disabled>← 更早</button>
+        <button id="trendPrev" class="button ghost" type="button" aria-label="查看更早时段" aria-controls="monthlyChart" disabled>←</button>
         <span id="trendPageInfo" class="muted" aria-live="polite"></span>
-        <button id="trendNext" class="button ghost" type="button" aria-controls="monthlyChart" disabled>更近 →</button>
+        <button id="trendNext" class="button ghost" type="button" aria-label="查看较新时段" aria-controls="monthlyChart" disabled>→</button>
       </nav>
       <div class="trend-chart"><svg id="monthlyChart" class="monthly-chart" role="img" aria-label="分类支出堆叠柱状图"></svg></div>
       <div id="trendDetail" class="trend-detail" hidden>
@@ -106,6 +102,10 @@
         <div id="dailyGrowthPanel" hidden>
           <h3>每日累计净支出与校内收入</h3>
           <p id="dailyGrowthMeta" class="muted"></p>
+          <div id="growthExpenseFilter" class="growth-expense-filter" hidden>
+            <label><input id="excludeLargeExpenses" type="checkbox" aria-describedby="expenseFilterHint">排除单笔 ≥ 1000 元支出</label>
+            <span id="expenseFilterHint" class="micro" aria-live="polite">仅影响本月折线图，统计与交易明细保持完整。</span>
+          </div>
           <div class="growth-legend"><span>实际累计净支出</span><span class="plan">计划累计支出</span><span class="budget">整期额度</span><span class="school-income">校内税后收入累计</span></div>
           <div class="chart-scroll"><svg id="dailyGrowthChart" class="monthly-chart" role="img" aria-label="每日实际累计净支出、计划累计支出、整期额度及校内税后收入累计"></svg></div>
           <div id="dailyGrowthPoint" class="growth-readout muted" aria-live="polite"></div>

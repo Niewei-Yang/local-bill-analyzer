@@ -29,9 +29,10 @@ try {
     assert.equal(await receipt.count(), 1);
     assert.ok((await receipt.textContent()).includes('−¥2,994.00'));
     assert.ok((await page.locator('#growthDaySummary').textContent()).includes('当日净支出 ¥81.80'));
-    assert.ok((await dot.getAttribute('aria-label')).includes('当日净支出 ¥81.80'));
+    assert.ok((await dot.getAttribute('aria-label')).includes('当日消费 81.80 元'));
     await dot.focus();
-    assert.ok((await page.locator('#dailyGrowthPoint').textContent()).includes('¥81.80'));
+    assert.equal(await page.locator('#dailyGrowthPoint').textContent(), '当日消费 81.80 元，小于计划 63.36 元');
+    assert.equal(await dot.locator('title').textContent(), '当日消费 81.80 元，小于计划 63.36 元');
     const curve = await page.evaluate(() => {
       const { detail, bounds } = state.growthContext;
       const points = cumulativeDailyPoints(detail.trend, bounds);

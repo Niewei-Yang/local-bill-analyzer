@@ -5,6 +5,7 @@ const state = {
   detailRequest: 0,
   recentRequest: 0,
   growthDayRequest: 0,
+  growthFilterRequest: 0,
   selectedPeriodId: null,
   recentContext: null,
   recentPage: 1,
@@ -181,10 +182,10 @@ async function openGrowthDay(point, dot, context) {
   }
 }
 
-function renderDailyGrowth(detail, period, dashboard, bounds, preserveDay = false) {
+function renderDailyGrowth(detail, period, dashboard, bounds, preserveDay = false, chartDetail = detail) {
   const selectedDay = preserveDay ? $(".growth-point.selected")?.dataset.day : null;
   if (!preserveDay) clearGrowthDay();
-  state.growthContext = { detail, period, dashboard, bounds };
+  state.growthContext = { detail, chartDetail, period, dashboard, bounds };
   const panel = $("#dailyGrowthPanel");
   panel.hidden = !["month", "week"].includes(dashboard.granularity);
   const svg = $("#dailyGrowthChart");
@@ -192,23 +193,30 @@ function renderDailyGrowth(detail, period, dashboard, bounds, preserveDay = fals
   if (panel.hidden) return;
   const budget = periodBudget(period.period, dashboard.granularity);
   const monthly = dashboard.granularity === "month";
+  $("#growthExpenseFilter").hidden = !monthly;
+  setText("#expenseFilterHint", "仅影响本月折线图，统计与交易明细保持完整。");
+  const plottedDetail = monthly ? chartDetail : detail;
   const displayBounds = { ...bounds };
   if (monthly && period.period === dashboard.trend?.at(-1)?.period) {
     const [year, month] = period.period.split("-").map(Number);
     displayBounds.end = new Date(Date.UTC(year, month, 0)).toISOString().slice(0, 10);
   }
-  const points = cumulativeDailyPoints(detail.trend, displayBounds, state.monthlyBudget, detail.school_income_daily);
+  const points = cumulativeDailyPoints(plottedDetail.trend, displayBounds, state.monthlyBudget, detail.school_income_daily);
   const actualPoints = points.filter(point => point.day <= bounds.end);
   const latest = actualPoints.at(-1)?.total || 0;
-  setText("#dailyGrowthMeta", `${monthly ? "月" : "周"}额度 ${money.format(budget)} · 累计净支出 ${money.format(latest)} · ${latest > budget ? "超出" : "剩余"} ${money.format(Math.abs(budget - latest))} · 校内税后收入累计 ${money.format(actualPoints.at(-1)?.schoolIncome || 0)}${monthly ? "" : `（${money.format(state.monthlyBudget)} ÷ 当月天数，按周一至周日逐日相加）`}`);
-  const describe = point => `${point.day} · 当日净支出 ${money.format(point.daily)} · 累计净支出 ${money.format(point.total)} · 计划累计 ${money.format(point.planned)} · ${point.total > point.planned ? "超计划" : "低于计划"} ${money.format(Math.abs(point.total - point.planned))} · 当日校内税后收入 ${money.format(point.dailySchoolIncome)} · 累计校内税后收入 ${money.format(point.schoolIncome)}`;
+  setText("#dailyGrowthMeta", `${monthly ? "月" : "周"}额度 ${money.format(budget)} · 累计净支出 ${money.format(latest)} · ${latest > budget ? "超出" : "剩余"} ${money.format(Math.abs(budget - latest))} · 校内税后收入累计 ${money.format(actualPoints.at(-1)?.schoolIncome || 0)}${monthly ? (chartDetail !== detail ? " · 此图已排除单笔 ≥ 1000 元支出" : "") : `（${money.format(state.monthlyBudget)} ÷ 当月天数，按周一至周日逐日相加）`}`);
+  const describe = point => {
+    const delta = Math.round((point.daily - dailyBudget(point.day)) * 100) / 100;
+    return `当日消费 ${point.daily.toFixed(2)} 元，${delta > 0 ? "超出计划" : delta < 0 ? "小于计划" : "与计划持平"} ${Math.abs(delta).toFixed(2)} 元`;
+  };
   const showPoint = (point, income = false) => {
     const readout = $("#dailyGrowthPoint");
+    if (!income) {
+      readout.textContent = describe(point);
+      return;
+    }
     readout.replaceChildren(make("span", point.day, "growth-readout-date"));
-    const metrics = income
-      ? [["当日税后收入", point.dailySchoolIncome], ["累计校内税后收入", point.schoolIncome]]
-      : [["当日净支出", point.daily], ["累计净支出", point.total],
-        [point.total > point.planned ? "超计划" : "低于计划", Math.abs(point.total - point.planned)]];
+    const metrics = [["当日税后收入", point.dailySchoolIncome], ["累计校内税后收入", point.schoolIncome]];
     metrics.forEach(([label, value]) => {
       const item = make("span", undefined, "growth-readout-item");
       item.append(make("span", label), make("strong", money.format(value)));
@@ -238,7 +246,7 @@ function renderDailyGrowth(detail, period, dashboard, bounds, preserveDay = fals
   svg.append(svgNode("path", { d: actualPoints.map((point, index) => `${index ? "L" : "M"}${x(index)},${y(point.total)}`).join(" "), class: "growth-line" }));
   svg.append(svgNode("path", { d: actualPoints.map((point, index) => `${index ? "L" : "M"}${x(index)},${y(point.schoolIncome)}`).join(" "), class: "growth-school-income" }));
   actualPoints.forEach((point, index) => {
-    const dot = svgNode("circle", { cx: x(index), cy: y(point.total), r: 4, class: "growth-point", tabindex: "0", role: "button", "aria-pressed": "false", "aria-label": `${describe(point)}，点击查看消费明细` });
+    const dot = svgNode("circle", { cx: x(index), cy: y(point.total), r: 4, class: "growth-point", tabindex: "0", role: "button", "aria-pressed": "false", "aria-label": `${point.day}，${describe(point)}，点击查看消费明细` });
     dot.dataset.day = point.day;
     if (point.day === selectedDay) {
       dot.classList.add("selected");
@@ -274,12 +282,35 @@ function renderDailyGrowth(detail, period, dashboard, bounds, preserveDay = fals
   });
 }
 
+async function updateGrowthExpenseFilter() {
+  const context = state.growthContext;
+  if (!context || context.dashboard.granularity !== "month" || $("#trendDetail").hidden || $("#dailyGrowthPanel").hidden) return;
+  const request = ++state.growthFilterRequest;
+  const detailRequest = state.detailRequest;
+  const { detail, period, dashboard, bounds } = context;
+  const exclude = $("#excludeLargeExpenses").checked;
+  try {
+    let chartDetail = detail;
+    if (exclude) {
+      setText("#expenseFilterHint", "正在更新本月折线图…");
+      const params = contextParams({ ...state.filterContext, ...bounds, excludeLargeExpenses: true }, { granularity: "day" });
+      chartDetail = await api(`/api/dashboard?${params}`);
+    }
+    if (request !== state.growthFilterRequest || detailRequest !== state.detailRequest) return;
+    renderDailyGrowth(detail, period, dashboard, bounds, true, chartDetail);
+  } catch (error) {
+    if (request !== state.growthFilterRequest || detailRequest !== state.detailRequest) return;
+    $("#excludeLargeExpenses").checked = context.chartDetail !== detail;
+    setText("#expenseFilterHint", "折线图更新失败，已保留原图。");
+    notice(`折线图更新失败：${error.message}`, true);
+  }
+}
+
 function currentFilterContext() {
   return {
     start: $("#startDate").value,
     end: $("#endDate").value,
     platform: $("#platformFilter").value,
-    excludeLargeExpenses: $("#excludeLargeExpenses").checked,
   };
 }
 
@@ -369,6 +400,7 @@ async function openTrendDetail(period, periodIndex, dashboard, group) {
     renderAnalysisSections(detail, { label: selectionLabel, granularity: dashboard.granularity }, topExpense?.items?.[0] || null);
     state.recentContext = context;
     renderRecentPage(recent.items, recent.total, recent.page, recent.size);
+    if (dashboard.granularity === "month" && $("#excludeLargeExpenses").checked) updateGrowthExpenseFilter();
   } catch (error) {
     if (request === state.detailRequest) {
       closeTrendDetail();
@@ -396,7 +428,7 @@ function renderSummary(data) {
   setText("#expenseMeta", `${integer.format(summary.expense_count)} 笔支出，${integer.format(summary.refund_count)} 笔退款`);
   setText("#medianMeta", `单笔中位数 ${money.format(summary.median_expense)}`);
   const scope = data.period.start ? `${data.period.start} 至 ${data.period.end}（${data.period.days} 天）` : "当前筛选下暂无交易";
-  setText("#periodText", scope + (state.filterContext?.excludeLargeExpenses ? " · 已排除单笔 ≥ 1000 元支出" : ""));
+  setText("#periodText", scope);
 }
 
 function renderPlatforms(items) {
@@ -916,8 +948,8 @@ $("#monthlyBudget").addEventListener("input", event => {
     setText("#budgetHint", "额度已更新；当前浏览器无法保存，刷新后将恢复默认值。");
   }
   if (state.growthContext && !$("#trendDetail").hidden && !$("#dailyGrowthPanel").hidden) {
-    const { detail, period, dashboard, bounds } = state.growthContext;
-    renderDailyGrowth(detail, period, dashboard, bounds, true);
+    const { detail, chartDetail, period, dashboard, bounds } = state.growthContext;
+    renderDailyGrowth(detail, period, dashboard, bounds, true, chartDetail);
   }
 });
 $("#closeTrendDetail").addEventListener("click", closeTrendDetail);
@@ -926,13 +958,12 @@ $("#recentNext").addEventListener("click", () => loadRecentPage(state.recentPage
 $("#fileInput").addEventListener("change", event => uploadFiles([...event.target.files]));
 $("#applyFilters").addEventListener("click", loadDashboard);
 $("#granularity").addEventListener("change", loadDashboard);
-$("#excludeLargeExpenses").addEventListener("change", loadDashboard);
+$("#excludeLargeExpenses").addEventListener("change", updateGrowthExpenseFilter);
 $("#clearFilters").addEventListener("click", () => {
   $("#startDate").value = "";
   $("#endDate").value = "";
   $("#platformFilter").value = "";
   $("#granularity").value = "month";
-  $("#excludeLargeExpenses").checked = false;
   loadDashboard();
 });
 

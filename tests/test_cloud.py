@@ -8,7 +8,7 @@ import threading
 import unittest
 from http.server import ThreadingHTTPServer
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 from urllib.error import HTTPError
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 from urllib.request import Request, urlopen
@@ -26,6 +26,28 @@ TEST_URL = os.environ.get("TEST_DATABASE_URL")
 
 
 class AccessTests(unittest.TestCase):
+    def test_cloud_password_length_and_login(self):
+        request = object.__new__(handler)
+        request.command = "GET"
+        request.send_error_json = Mock()
+        with patch.dict(os.environ, {"DATABASE_URL": "postgresql://localhost/ledger", "APP_USERNAME": "admin"}):
+            for password in ("", "1234567", "12345678", "123456789012345"):
+                with self.subTest(length=len(password)), patch.dict(os.environ, {"APP_PASSWORD": password}):
+                    credentials = base64.b64encode(f"admin:{password}".encode()).decode()
+                    request.headers = {"Authorization": "Basic " + credentials}
+                    request.send_error_json.reset_mock()
+                    accepted = request.check_access(require_cloud=True)
+                    self.assertEqual(accepted, len(password) >= 8)
+                    if accepted:
+                        request.send_error_json.assert_not_called()
+                        self.assertFalse(access.authorized("Basic " + base64.b64encode(b"admin:wrong-password").decode()))
+                    else:
+                        request.send_error_json.assert_called_once_with("登录密码未配置完成：APP_PASSWORD 至少需要 8 个字符", 503)
+            with patch.dict(os.environ, {"DATABASE_URL": "", "APP_PASSWORD": "12345678"}):
+                request.send_error_json.reset_mock()
+                self.assertFalse(request.check_access(require_cloud=True))
+                request.send_error_json.assert_called_once_with("部署尚未配置：需要 PostgreSQL 的 DATABASE_URL", 503)
+
     def test_credentials_and_cross_site_requests(self):
         with patch.dict(os.environ, {"APP_USERNAME": "admin", "APP_PASSWORD": "test-password-with-length"}):
             good = "Basic " + base64.b64encode(b"admin:test-password-with-length").decode()

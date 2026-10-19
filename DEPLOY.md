@@ -10,7 +10,7 @@
 | --- | --- |
 | `DATABASE_URL` | Neon 的 PostgreSQL 连接串，保留 `sslmode=require`；推荐 pooled 地址 |
 | `APP_USERNAME` | 网站登录用户名，默认 `admin` |
-| `APP_PASSWORD` | 至少 16 位的独立网站密码 |
+| `APP_PASSWORD` | 至少 8 个字符的独立网站密码 |
 
 访问网站时浏览器弹出登录框。数据库连接串仅由后端使用，不会发送到页面。缺少数据库连接或网站密码时，云端接口返回未配置状态，不会回退为临时 SQLite。
 
@@ -28,7 +28,9 @@ npx vercel --prod
 
 根目录的 `vercel.json` 把请求路由到 `api/index.py`。无需启动 `python app.py serve`，也不需要另外构建前端。`.vercelignore` 会排除账单、数据库、测试截图及环境变量文件，防止这些文件进入部署包。
 
-Vercel 的 Production 环境变量变更需要重新部署才会生效。没有上传代码到远端 Git 仓库时，CLI 部署仍可正常使用；后续可单独配置 Git 自动部署。
+Vercel 的 Production 环境变量变更需要重新部署才会生效。修改 `APP_USERNAME` 或 `APP_PASSWORD` 后，在 Deployments 中重新部署生产版本；如果浏览器仍使用旧登录信息，可打开无痕窗口重新登录。
+
+CLI 部署后，可用 `npx vercel git connect https://github.com/Niewei-Yang/local-bill-analyzer.git` 连接 GitHub 仓库。本项目已连接，生产分支为 `main`，后续推送到该分支会触发生产部署。
 
 ## 一次性迁移现有账本
 

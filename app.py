@@ -81,9 +81,13 @@ class BillRequestHandler(BaseHTTPRequestHandler):
         return 4 * 1024 * 1024 if self.cloud else MAX_UPLOAD_BYTES
 
     def check_access(self, require_cloud=False):
-        if require_cloud and (not is_postgres(os.environ.get("DATABASE_URL", "")) or len(os.environ.get("APP_PASSWORD", "")) < 16):
-            self.send_error_json("部署尚未配置：需要 DATABASE_URL 和至少 16 位的 APP_PASSWORD", 503)
-            return False
+        if require_cloud:
+            if not is_postgres(os.environ.get("DATABASE_URL", "")):
+                self.send_error_json("部署尚未配置：需要 PostgreSQL 的 DATABASE_URL", 503)
+                return False
+            if len(os.environ.get("APP_PASSWORD", "")) < access.MIN_PASSWORD_LENGTH:
+                self.send_error_json(f"登录密码未配置完成：APP_PASSWORD 至少需要 {access.MIN_PASSWORD_LENGTH} 个字符", 503)
+                return False
         if access.configured() and not access.authorized(self.headers.get("Authorization", "")):
             body = b'{"error":"Please sign in"}'
             self.send_response(401)

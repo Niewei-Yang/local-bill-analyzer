@@ -7,6 +7,9 @@ import os
 from urllib.parse import urlparse
 
 
+MIN_PASSWORD_LENGTH = 8
+
+
 def configured():
     return bool(os.environ.get("APP_PASSWORD"))
 

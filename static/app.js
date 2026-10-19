@@ -448,13 +448,13 @@ function renderTrend(data) {
   }[granularity];
   setText("#trendTitle", labels.title);
   setText("#trendHint", hasSchoolIncome
-    ? `${labels.hint}；紫色负柱为校内税后收入，柱顶为净支出（未减校内收入）`
+    ? `${labels.hint}；紫色负柱及括号数字为校内税后收入，柱顶首行为净支出（未减校内收入）`
     : `${labels.hint}；柱顶数字为净支出，零线下方为类别净抵扣`);
   svg.setAttribute("aria-label", labels.aria);
   const width = granularity === "day" ? Math.max(920, periods.length * 32 + 90)
     : granularity === "week" ? Math.max(920, periods.length * 62 + 90) : 920;
   const height = 330;
-  const margin = { top: 28, right: 18, bottom: 48, left: 62 };
+  const margin = { top: granularity === "month" ? 46 : 28, right: 18, bottom: 48, left: 62 };
   const innerWidth = width - margin.left - margin.right;
   const innerHeight = height - margin.top - margin.bottom;
   svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
@@ -540,9 +540,18 @@ function renderTrend(data) {
       group.append(rect);
     }
     if (granularity !== "day" || periods.length <= 35 || periodIndex % labelEvery === 0 || periodIndex === periods.length - 1) {
-      const label = svgNode("text", { x: x + barWidth / 2, y: y(positive) - 7, "text-anchor": "middle", class: "chart-label trend-net-label", "data-total": period.total }, Math.abs(period.total) >= 1000 ? `${(period.total / 1000).toFixed(2)}k` : period.total.toFixed(0));
+      const label = svgNode("text", { x: x + barWidth / 2, y: y(positive) - (granularity === "month" ? 25 : 7), "text-anchor": "middle", class: "chart-label trend-net-label", "data-total": period.total }, Math.abs(period.total) >= 1000 ? `${(period.total / 1000).toFixed(2)}k` : period.total.toFixed(0));
       label.append(svgNode("title", {}, `净支出 ${money.format(period.total)}${hasSchoolIncome ? "（未减校内收入）" : ""}`));
       group.append(label);
+      if (granularity === "month") {
+        const income = period.school_income || 0;
+        const incomeLabel = svgNode("text", {
+          x: x + barWidth / 2, y: y(positive) - 7, "text-anchor": "middle",
+          class: "chart-label trend-income-label", "data-income": income,
+        }, `（${income >= 1000 ? `${(income / 1000).toFixed(1)}k` : income.toFixed(0)}）`);
+        incomeLabel.append(svgNode("title", {}, `校内税后收入 ${money.format(income)}`));
+        group.append(incomeLabel);
+      }
     }
     if (periodIndex % labelEvery === 0 || periodIndex === periods.length - 1) {
       group.append(svgNode("text", { x: x + barWidth / 2, y: height - 20, "text-anchor": "middle", class: "chart-label trend-x-label" }, periodLabel(periodKey)));

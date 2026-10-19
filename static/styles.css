@@ -66,6 +66,7 @@ input, select { min-height: 38px; border: 1px solid var(--border); border-radius
 .chart-grid { stroke: var(--border); stroke-width: 1; }
 .chart-axis { stroke: var(--muted); stroke-width: 1; }
 .chart-label { fill: var(--text); font-size: 12px; }
+.trend-income-label { fill: var(--purple); }
 .chart-muted { fill: var(--muted); font-size: 11px; }
 .trend-period { cursor: pointer; }
 .trend-period:focus { outline: none; }

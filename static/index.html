@@ -4,7 +4,8 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="light dark">
-  <title>本地账单分析</title>
+  <meta name="description" content="汇总微信、支付宝与校内收入账单，查看收支趋势、消费分类和每日明细。">
+  <title>个人账单分析</title>
   <link rel="icon" href="data:,">
   <link rel="stylesheet" href="/styles.css">
 </head>
@@ -12,9 +13,9 @@
   <main class="shell">
     <header class="topbar">
       <div>
-        <p class="eyebrow">LOCAL BILL ANALYTICS</p>
-        <h1>本地账单分析</h1>
-        <p id="periodText" class="muted">正在读取数据库…</p>
+        <p class="eyebrow">PERSONAL BILL ANALYTICS</p>
+        <h1>个人账单分析</h1>
+        <p id="periodText" class="muted">正在读取账本…</p>
       </div>
       <div class="topbar-tools">
         <div class="upload-area">
@@ -25,10 +26,10 @@
         <div class="database-area">
           <input id="databaseFileInput" type="file" accept=".db,.sqlite,.sqlite3" hidden>
           <div class="database-buttons">
-            <button id="exportDatabaseButton" class="button" type="button">导出数据库</button>
-            <button id="importDatabaseButton" class="button" type="button">导入数据库</button>
+            <button id="exportDatabaseButton" class="button" type="button">导出备份</button>
+            <button id="importDatabaseButton" class="button" type="button">恢复账本</button>
           </div>
-          <p class="micro">导入会替换当前账本，并自动备份现有数据库</p>
+          <p class="micro">恢复会替换当前账本，原账本将自动备份</p>
         </div>
       </div>
     </header>
@@ -191,7 +192,7 @@
     </details>
 
     <footer>
-      <span id="storageNotice">数据保存在本机 SQLite，不上传云端。</span>
+      <span id="storageNotice">正在确认账本存储位置…</span>
       <span id="dbPath"></span>
     </footer>
   </main>

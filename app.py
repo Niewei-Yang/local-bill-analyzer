@@ -65,7 +65,7 @@ def import_path(db_path: Path, path: Path) -> dict:
 
 
 class BillRequestHandler(BaseHTTPRequestHandler):
-    server_version = "LocalBillAnalyzer/1.0"
+    server_version = "BillAnalyzer/1.0"
     cloud = False
 
     @property
@@ -302,7 +302,7 @@ def serve(db_path: Path, host: str, port: int, open_browser: bool) -> None:
 def main() -> None:
     from dotenv import load_dotenv
     load_dotenv(PROJECT_DIR / ".env")
-    parser = argparse.ArgumentParser(description="本地微信/支付宝账单分析")
+    parser = argparse.ArgumentParser(description="个人账单分析：微信、支付宝与校内收入")
     parser.add_argument("--db", default=os.environ.get("DATABASE_URL") or DEFAULT_DB, help="SQLite 路径或 PostgreSQL URL")
     subparsers = parser.add_subparsers(dest="command")
     serve_parser = subparsers.add_parser("serve", help="启动本地网页和 API")

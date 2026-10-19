@@ -152,7 +152,7 @@ def validate_database(db_path: Path | str) -> dict[str, int]:
         }
         for table, required_columns in required.items():
             if table not in tables:
-                raise ValueError("文件不是本地账单分析数据库：缺少必要数据表")
+                raise ValueError("文件不是兼容的账本备份：缺少必要数据表")
             columns = {row[1] for row in connection.execute(f"PRAGMA table_info({table})")}
             if not required_columns <= columns:
                 raise ValueError(f"数据库结构不兼容：{table} 数据表缺少必要字段")

@@ -727,8 +727,8 @@ async function loadDashboard() {
 
 async function loadMeta() {
   const meta = await api("/api/meta");
-  setText("#dbPath", `数据库：${meta.database}`);
-  setText("#storageNotice", meta.storage === "postgres" ? "账本保存在云数据库，跨设备共享。" : "数据保存在本机 SQLite，不上传云端。");
+  setText("#dbPath", meta.storage === "postgres" ? "" : `账本位置：${meta.database}`);
+  setText("#storageNotice", meta.storage === "postgres" ? "账本保存在云端，登录后可跨设备查看。" : "账本保存在运行服务的设备上。");
 }
 
 async function loadRules() {
@@ -808,7 +808,7 @@ async function exportDatabase() {
     link.download = filename;
     link.click();
     setTimeout(() => URL.revokeObjectURL(url), 1000);
-    notice(`数据库已导出为 ${filename}。`);
+    notice(`账本备份已导出为 ${filename}。`);
   } catch (error) {
     notice(error.message, true);
   } finally {
@@ -819,7 +819,7 @@ async function exportDatabase() {
 async function importDatabase(file) {
   if (!file) return;
   const confirmed = window.confirm(
-    `确定从“${file.name}”恢复数据库吗？这会替换当前账本。导入前会自动备份当前数据库；文件必须是完整且兼容的本地账单分析 SQLite 数据库。`
+    `确定从“${file.name}”恢复账本吗？这会替换当前账本，原账本将自动备份。请选择本工具导出的完整账本备份文件。`
   );
   if (!confirmed) return;
   const button = $("#importDatabaseButton");
@@ -833,8 +833,8 @@ async function importDatabase(file) {
     });
     const result = await response.json();
     if (!response.ok) throw new Error(result.error || `导入失败：${response.status}`);
-    const backup = result.backup ? `现有数据库已备份为 ${result.backup}` : "原数据库为空，无需备份";
-    notice(`数据库已恢复：${integer.format(result.transactions)} 笔交易、${integer.format(result.rules)} 条分类规则、${integer.format(result.imports)} 条导入记录。${backup}。`);
+    const backup = result.backup ? `原账本已备份为 ${result.backup}` : "原账本为空，无需备份";
+    notice(`账本已恢复：${integer.format(result.transactions)} 笔交易、${integer.format(result.rules)} 条分类规则、${integer.format(result.imports)} 条导入记录。${backup}。`);
     await Promise.all([loadDashboard(), loadMeta(), loadRules(), loadImports()]);
   } catch (error) {
     notice(error.message, true);
